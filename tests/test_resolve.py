@@ -15,8 +15,15 @@ def source():
     return FakeSource()
 
 
-def _parsed(title="Deep Work: Rules for Focused Success", author="Newport, Cal", isbns=()):
-    return ParsedMetadata(title=title, author=author, isbns=list(isbns))
+def _parsed(
+    title="Deep Work: Rules for Focused Success",
+    author="Newport, Cal",
+    isbns=(),
+    isbns_scraped=False,
+):
+    return ParsedMetadata(
+        title=title, author=author, isbns=list(isbns), isbns_scraped=isbns_scraped
+    )
 
 
 def test_identify_accepts_isbn_hit_that_agrees_on_title(source):
@@ -52,6 +59,39 @@ def test_identify_rejects_isbn_hit_disagreeing_on_title_and_author_and_drops_isb
     assert found.author == "Newport, Cal"
     assert found.isbn is None
     assert found.cover_url is None
+
+
+def test_identify_rejects_scraped_isbn_of_another_book_by_the_same_author(source):
+    # The ISBN scraped from Deep Work's "Also by Cal Newport" page belongs
+    # to a different Newport book; the shared author must not vouch for it.
+    other = Candidate(
+        title="So Good They Can't Ignore You", author="Cal Newport", cover_url="sg.jpg"
+    )
+    source.record = other
+    source.results = [DEEP_WORK]
+
+    found = identify(_parsed(isbns=[ISBN], isbns_scraped=True), source)
+
+    assert found.basis == MatchBasis.TITLE_AUTHOR
+    assert found.cover_url == "dw.jpg"
+    assert found.isbn is None
+
+
+def test_identify_accepts_asserted_isbn_when_only_the_author_agrees(source):
+    # An EPUB's dc:identifier is publisher-asserted: a record whose title
+    # differs (the volume's own title, an edition) but shares the author
+    # is still this book.
+    volume = Candidate(
+        title="The Fellowship of the Ring", author="J.R.R. Tolkien", cover_url="f.jpg"
+    )
+    source.record = volume
+
+    found = identify(
+        _parsed(title="The Lord of the Rings Volume 1", author="Tolkien", isbns=[ISBN]), source
+    )
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.isbn == ISBN
 
 
 def test_identify_keeps_isbn_when_open_library_has_no_record(source):

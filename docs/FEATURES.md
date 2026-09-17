@@ -68,11 +68,11 @@ What the file says about itself: title (T), author (A), ISBN (I).
 | B3 | Hyphens/spaces, `urn:isbn:` prefix | Extracted | ✅ | `test_isbn::is_valid_isbn_ignores_hyphens_and_spaces`; `urn:isbn:` verified in-session |
 | B4 | Bad checksum / wrong length | Ignored | ✅ | `test_isbn::rejects_bad_checksum`, `rejects_wrong_length` |
 | B5 | False-positive ISBN from PDF text, record contradicts **title and author** | Rejected, ISBN dropped, fall through to search | ✅ | `test_resolve::rejects_isbn_hit_disagreeing_on_title_and_author_and_drops_isbn`, `test_library::rejects_isbn_lookup_that_contradicts_the_file` |
-| B6 | False-positive ISBN whose record shares the **author** only ("Also by Cal Newport: … ISBN …" in Deep Work's front matter) | Rejected — it is a different book | ❌ | `match_basis(..., same_isbn=True)` → `isbn`: the guard needs *both* to disagree, so the wrong book's ISBN and cover are accepted. Title survives (ADR-10) which masks it in `list` output |
+| B6 | False-positive ISBN whose record shares the **author** only ("Also by Cal Newport: … ISBN …" in Deep Work's front matter) | Rejected — it is a different book | ✅ | `test_match::scraped_isbn_with_only_author_agreeing_is_none`, `test_resolve::rejects_scraped_isbn_of_another_book_by_the_same_author`, `test_library::rejects_pdf_isbn_of_another_book_by_the_same_author` — a text-scraped ISBN (`ParsedMetadata.isbns_scraped`, set by the PDF parser) needs title agreement; an EPUB `dc:identifier` keeps the lenient either-agrees guard (ADR-14). Residual: a scraped ISBN *unknown* to OL is kept (B7) and can still seed a `grouped=isbn` join with the author's other book |
 | B7 | Valid ISBN unknown to Open Library (new edition) | ISBN kept on the book; fall back to search | ✅ 🟢 | `test_resolve::keeps_isbn_when_open_library_has_no_record`, `falls_back_to_search_after_unknown_isbn`; live: Algorithmic Thinking 2nd ed. |
 | B8 | ISBN appears after page 5 of a PDF | Not found | ⚠️ | `test_pdf::ignores_isbn_beyond_scan_page_limit` (pinned as the limit) |
 | B9 | Scanned/image PDF (no extractable text) | No ISBN; title/author from info dict only | ❓ | Follows from `extract_text() or ""`; untested |
-| B10 | Same false ISBN in two unrelated files, OL has no record for it | Not grouped | ❌ | Chain of B7 + `_find_book`: an exact ISBN match groups with **no** title/author cross-check, so both files land in one folder as `grouped=isbn` |
+| B10 | Same false ISBN in two unrelated files, OL has no record for it | Not grouped | ✅ | `test_library::does_not_group_by_isbn_when_title_and_author_both_disagree` — `_find_book` applies `match_basis(same_isbn=True)` like identify does (same both-must-disagree guard, so B6 still applies to grouping) |
 
 ## C. Title shape
 
@@ -87,7 +87,7 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | C4 | Subtitle after `;`, ` - `, en/em dash | Agree | ✅ | `test_match::normalize_title_strips_subtitle_after_semicolon`, `…after_spaced_dash` |
 | C5 | Subtitle after a period ("A Christmas Carol. Being a Ghost Story…") | Agree | ⚠️ | PLAN Backlog: not split because ". " also appears inside titles ("Mr. Darcy…") |
 | C6 | Edition in `(…)` / `[…]` | Stripped, agree | ✅ | `test_match::normalize_title_strips_edition_parenthetical` |
-| C7 | Edition after a comma ("Algorithmic Thinking, 2nd Edition" vs "Algorithmic Thinking") | Disagree — a different edition is a different book | 🟢 ❓ | Verified in-session → None; live: the 2nd-edition file correctly rejects the 1st-edition cover. No unit test pins it. **Design stance to confirm:** should editions ever group? |
+| C7 | Edition after a comma ("Algorithmic Thinking, 2nd Edition" vs "Algorithmic Thinking") | Disagree — a different edition is a different book | 🟢 ❓ | Verified in-session → None; live: the 2nd-edition file correctly rejects the 1st-edition cover. No unit test pins it. **Design stance to confirm:** should editions ever group? Note: since ADR-14 a *PDF* whose scraped ISBN is correct but whose OL title carries/lacks the edition suffix is rejected too (safe direction, `needs_review`) |
 | C8 | Leading article ("The …" vs "…") | Agree | ✅ | `test_match::normalize_title_strips_leading_article_and_punctuation` |
 | C9 | Near-miss different books ("Book of Job" / "Book of Joel") | Disagree | ✅ | `test_match::match_basis_book_of_job_vs_joel_is_none`, `test_library::does_not_group_book_of_job_with_book_of_joel` |
 | C10 | Series prefix ("The Expanse 1: Leviathan Wakes" vs "Leviathan Wakes") | Agree | ❌ | Subtitle split keeps the *prefix* → None. Safe direction (no false merge) but no identification, no cover |
@@ -97,8 +97,8 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | C14 | Non-Latin title (Greek fixture) | No false match; searchable case-insensitively | ✅ 🟢 | `test_real_books::search_matches_greek_title_case_insensitively` |
 | C15 | Same title, different author ("Dune" Herbert / Anderson) | Separate books | ✅ | `test_match::same_title_different_authors_is_none`, `test_library::does_not_group_same_title_different_author` |
 | C16 | Same title, author missing on one side | `title_only` group, `needs_review` | ✅ ⚠️ | `test_library::groups_by_title_only_when_author_missing_and_flags_it` — accepted false-merge risk, surfaced for review |
-| C17 | **Multi-volume / numbered sequels, same author** ("The Lord of the Rings Volume 1" vs "Volume 2"; "Introduction to Algorithms" vs "…Algorithms 2") | Disagree — different books | ❌ | Verified in-session → `title_author`: the 0.9 fuzz on long titles swallows a one-character volume number, so volumes **merge into one folder** and the second overwrites the first's format file of the same kind. Short titles ("Foo Vol. 1"/"Vol. 2") stay apart only because the ratio drops under 0.9 |
-| C18 | Title with trailing "Vol. 1"/"Part 2" vs OL record without it | Undecided | ❓ | Depends on length via C17; no pinned stance |
+| C17 | **Multi-volume / numbered sequels, same author** ("The Lord of the Rings Volume 1" vs "Volume 2"; "Introduction to Algorithms" vs "…Algorithms 2") | Disagree — different books | ✅ | `test_match::titles_agree_treats_differing_volume_numbers_as_different_books`, `test_library::keeps_volumes_of_a_set_as_separate_books` — the fuzz is skipped when the number tokens (digits or roman numerals I–XXXIX) of the normalized titles differ |
+| C18 | Title with trailing "Vol. 1"/"Part 2" vs OL record without it | Disagree (safe direction: unidentified, `needs_review`) | ✅ | Falls out of C17: `("… Volume 1", "…")` differs in number tokens. The `title_only`/identical path is unaffected |
 
 ## D. Author shape
 
@@ -154,7 +154,7 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | F12 | Reviewed book, `title_only` join | `reviewed` cleared | ✅ | `test_library::clears_reviewed_on_title_only_join` |
 | F13 | Re-import of the same file (same format kind) | Idempotent: one format entry, file replaced | ❓ | Mechanism in `import_file` (drop same-kind formats, append); only the legacy-rename case is tested |
 | F14 | Same format kind, different file, same book (two EPUB editions) | Undecided | ❌ | Second silently **overwrites** the first's `.epub`; there is no "already have this format" signal in `Book` or `ImportBatchResult` |
-| F15 | Multi-volume set (C17) | Separate books | ❌ | Merged; see C17 |
+| F15 | Multi-volume set (C17) | Separate books | ✅ | `test_library::keeps_volumes_of_a_set_as_separate_books` |
 | F16 | Order independence: `{epub without ISBN, pdf with ISBN}` imported in either order | Same end state | ❓ | Both orders reason through F3/F7; not pinned |
 
 ## G. Placement on disk
@@ -195,19 +195,14 @@ Failures that **silently merge or mislabel** rank above ones that merely
 leave a book unidentified, because the latter are already surfaced by
 `needs_review`.
 
-1. **C17/F15 — multi-volume sets merge.** Long titles differing by one
-   digit pass the 0.9 fuzz. Fix direction: treat a trailing/embedded
-   number difference as a hard disagreement, or drop fuzz when both
-   normalized titles contain a digit.
-2. **B6 — false ISBN sharing the author is accepted.** The
-   both-must-disagree guard was designed for scraped PDF ISBNs; a cited
-   book by the same author is the common case it misses. Fix direction:
-   with a *title present on both sides and disagreeing*, require the
-   ISBN to come from EPUB `dc:identifier` (publisher-asserted) rather
-   than PDF text, or demand title agreement when the ISBN was scraped.
-3. **B10 — scraped ISBN groups without a cross-check.**
-   `_find_book`'s ISBN branch should run `match_basis(...,
-   same_isbn=True)` like identify does.
+1. ~~**C17/F15 — multi-volume sets merge.**~~ Closed: number tokens
+   must match before the fuzz applies.
+2. ~~**B6 — false ISBN sharing the author is accepted.**~~ Closed
+   (ADR-14): a scraped ISBN needs title agreement. Residual noted on
+   the B6 row: the B7 keep-unknown-ISBN path has no provenance, so
+   grouping can't apply the stricter rule.
+3. ~~**B10 — scraped ISBN groups without a cross-check.**~~ Closed:
+   `_find_book`'s ISBN branch runs `match_basis(..., same_isbn=True)`.
 4. **F14 — same-kind format silently overwritten.** Needs a decision
    (reject? version? report?) before code.
 5. **A12 — junk titles `title_only`-match each other.** A short
@@ -345,9 +340,10 @@ built yet: the review flag exists, the way to act on it doesn't.
 Several Part I gaps are cheaper to close as Part II features than as
 matching heuristics:
 
-- **C17, C7, C16** (volumes, editions, ambiguous title-only merges) —
-  a human choosing among candidates (K5) or splitting (K7) is more
-  reliable than any threshold, once the evidence is *shown*.
+- **C7, C16** (editions, ambiguous title-only merges) — a human
+  choosing among candidates (K5) or splitting (K7) is more reliable
+  than any threshold, once the evidence is *shown*. (C17 turned out to
+  be a clean rule — number tokens — and closed on the Part I side.)
 - **E12** (no cover on Open Library) — only K4 or N8 fixes it.
 - **F14** (same-kind overwrite) — is really I11 + L6.
 - **A14, D11** (multiple / non-Latin authors) — start with I14.

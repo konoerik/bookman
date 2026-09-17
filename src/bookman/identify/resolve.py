@@ -48,8 +48,9 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
 
     1. If the file carries an ISBN, look it up. The record is accepted
        only if `match_basis(..., same_isbn=True)` agrees -- i.e. the
-       record's title and author don't *both* contradict the file's.
-       If it's rejected, the ISBN is dropped from the result too, so a
+       record's title and author don't *both* contradict the file's,
+       or, for an ISBN scraped from page text, the titles agree. If
+       it's rejected, the ISBN is dropped from the result too, so a
        false-positive ISBN can't later seed an ISBN-based grouping.
     2. Otherwise, if the file has a title, search by title (and author,
        if known) and accept the best candidate `match_basis` agrees
@@ -83,7 +84,12 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
             isbn = file_isbn
         else:
             basis = match_basis(
-                parsed.title, parsed.author, record.title, record.author, same_isbn=True
+                parsed.title,
+                parsed.author,
+                record.title,
+                record.author,
+                same_isbn=True,
+                isbn_scraped=parsed.isbns_scraped,
             )
             if basis is not None:
                 _log.debug("accepted ISBN %s record %r (%s)", file_isbn, record.title, basis.value)

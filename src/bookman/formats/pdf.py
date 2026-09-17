@@ -39,7 +39,8 @@ def parse_pdf(path: Path) -> ParsedMetadata:
         ParsedMetadata with whatever fields could be found. A missing,
         empty, or unreadable info dict field is returned as None;
         `isbns` is empty (not None) if none are found in the scanned
-        pages.
+        pages, and `isbns_scraped` is always True since they come
+        from page text.
 
     Raises:
         FileNotFoundError: If path does not exist.
@@ -58,7 +59,7 @@ def parse_pdf(path: Path) -> ParsedMetadata:
     except PdfReadError as exc:
         raise BadPdfError(f"{path}: not a valid PDF file") from exc
 
-    return ParsedMetadata(title=title, author=author, isbns=isbns)
+    return ParsedMetadata(title=title, author=author, isbns=isbns, isbns_scraped=True)
 
 
 @contextmanager

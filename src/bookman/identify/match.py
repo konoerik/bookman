@@ -20,6 +20,9 @@ _LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+")
 _NON_WORD = re.compile(r"[^\w\s]", re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
 _AUTHOR_SEPARATORS = re.compile(r"\s*(?:;|&|\band\b)\s*")
+# A whole token that is a number: digits, or a roman numeral 1-39 (enough
+# for volume/part markers; the bound keeps words like "mix" or "civil" out).
+_NUMBER_TOKEN = re.compile(r"^(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3}))$")
 # "Authors" that name nobody and so can't corroborate anything.
 _NON_AUTHORS = frozenset({"anonymous", "anon", "unknown", "various", "unknown author"})
 
@@ -118,6 +121,11 @@ def titles_agree(a: str, b: str) -> bool:
     """Whether two titles are the same after normalization, allowing a
     small amount of fuzz (difflib ratio >= 0.9 on the normalized forms).
 
+    The fuzz never bridges a difference in numbers: "... Volume 1" and
+    "... Volume 2" (or "Part II"/"Part III") are different books however
+    long the shared prefix, so the number tokens of both normalized
+    forms must match exactly before the ratio is consulted.
+
     Args:
         a: A raw title.
         b: A raw title.
@@ -128,7 +136,13 @@ def titles_agree(a: str, b: str) -> bool:
     na, nb = normalize_title(a), normalize_title(b)
     if na == nb:
         return True
+    if _number_tokens(na) != _number_tokens(nb):
+        return False
     return difflib.SequenceMatcher(None, na, nb).ratio() >= _FUZZY_TITLE_THRESHOLD
+
+
+def _number_tokens(normalized_title: str) -> list[str]:
+    return [t for t in normalized_title.split() if _NUMBER_TOKEN.match(t)]
 
 
 def match_basis(
@@ -138,6 +152,7 @@ def match_basis(
     cand_author: str | None,
     *,
     same_isbn: bool = False,
+    isbn_scraped: bool = False,
 ) -> MatchBasis | None:
     """Judge whether a file's own metadata and a candidate description
     (an Open Library record, or an existing library book) are the same book.
@@ -148,6 +163,11 @@ def match_basis(
       false-positive ISBN (a checksum-passing number scraped from a
       PDF) overwriting good data. Either agreeing is enough, since a
       shared ISBN is a strong prior.
+    - ... except when `isbn_scraped`: an ISBN pulled from page text
+      may be a *cited* book's ("Also by this author ..."), and a
+      shared author is exactly what such a citation shares. So a
+      scraped ISBN needs the titles to agree whenever both are
+      present; the author alone can't vouch for it.
     - Authors agree (share a surname) and titles agree (fuzzily):
       TITLE_AUTHOR.
     - Authors disagree: None, regardless of title.
@@ -161,6 +181,10 @@ def match_basis(
         cand_title: Title of the candidate, or None.
         cand_author: Author of the candidate, or None.
         same_isbn: True if both sides carry the same normalized ISBN.
+        isbn_scraped: True if the file's ISBN was scanned from its text
+            rather than read from a metadata field (see
+            `ParsedMetadata.isbns_scraped`). Only meaningful with
+            `same_isbn`.
 
     Returns:
         The basis on which they match, or None if they don't.
@@ -170,7 +194,7 @@ def match_basis(
     author_ok = authors_agree(file_author, cand_author)
 
     if same_isbn:
-        if have_titles and author_ok is not None and not title_ok and not author_ok:
+        if have_titles and not title_ok and (isbn_scraped or author_ok is False):
             return None
         return MatchBasis.ISBN
 

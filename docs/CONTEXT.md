@@ -1,8 +1,8 @@
 # Context
 <!-- Updated by /wrap at session end. Edit manually if needed. Keep it under 8 lines. -->
 
-**Current focus:** Nothing in progress — the pre-Part-II refactor (R1–R7) is complete; repo is public-ready at v0.1.0 (history reset), 263 tests, ruff/mypy clean. Part II features (docs/FEATURES.md) can start.
-**Last session:** Prepared the repo for GitHub (README, MIT license, CHANGELOG, CI, packaging metadata), reset git history to one initial commit, renumbered to 0.1.0, deleted the transient docs/HEALTH.md. Earlier: ADR-11 (`Book.directory` is the identity; UUID deferred but expected), ADR-12 (`storage.store.Catalog`), ADR-13 (`MetadataSource` injected into `Library`), errors hierarchy, logging, format registry.
-**Blocking:** Nothing.
-**Next action:** Choose the first Part II slice — recommended K1 mark reviewed + K2 edit title/author/ISBN (folder + format-file rename through `Catalog`), which the TUI needs first; alternatively a Part I gap from FEATURES.md "Gap summary" (C17 multi-volume merge, B6/B10 false-ISBN handling).
+**Current focus:** Nothing in progress — the three silent-merge gaps from FEATURES Part I (C17/F15, B10, B6) are closed and the work is uncommitted on `main` (276 tests, ruff/mypy clean; `ruff format --check` fails on 4 pre-existing files, not from this work).
+**Last session:** Closed C17/F15 (title fuzz requires matching number tokens), B10 (`_find_book` ISBN join runs `match_basis`), and B6 via ADR-14 (`ParsedMetadata.isbns_scraped`; a PDF-scraped ISBN needs title agreement, an EPUB `dc:identifier` keeps the either-agrees guard); CHANGELOG `[Unreleased]` and FEATURES rows updated.
+**Blocking:** Nothing. Residual noted on FEATURES B6: a scraped ISBN unknown to OL (B7) has no provenance on `Book`, so grouping can't apply the stricter rule — needs I12. Still worth a glance: the first CI run's Windows leg.
+**Next action:** Commit this work, then choose between the remaining Part I items (A12 junk-title stop-list, A10, D9; F14 needs a decision first) and the first Part II slice (I5 + K1 + K2 + L2/L10, which the TUI needs first).
 <!-- wrapped: 2026-09-16 -->

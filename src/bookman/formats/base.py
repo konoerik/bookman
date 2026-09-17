@@ -17,11 +17,23 @@ from bookman.models import FormatKind
 
 @dataclass
 class ParsedMetadata:
-    """Metadata extracted directly from a single ebook file."""
+    """Metadata extracted directly from a single ebook file.
+
+    Attributes:
+        title: The file's own title, or None.
+        author: The file's own author string, or None.
+        isbns: Valid ISBN-13s found in the file, best first.
+        isbns_scraped: True when `isbns` were found by scanning page
+            text rather than read from a structured metadata field.
+            A scraped ISBN may belong to a book merely *cited* in the
+            file ("Also by this author ..."), so identification asks
+            more of it before trusting it (see `match_basis`).
+    """
 
     title: str | None
     author: str | None
     isbns: list[str] = field(default_factory=list)
+    isbns_scraped: bool = False
 
 
 class FormatParser(Protocol):

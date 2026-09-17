@@ -76,6 +76,7 @@ def test_parse_pdf_finds_isbn_in_first_pages_text(tmp_path):
     pdf = _make_pdf(tmp_path / "book.pdf", page_texts=(f"ISBN {VALID_ISBN13}",))
     result = parse_pdf(pdf)
     assert result.isbns == [VALID_ISBN13]
+    assert result.isbns_scraped
 
 
 def test_parse_pdf_ignores_isbn_beyond_scan_page_limit(tmp_path):

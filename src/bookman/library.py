@@ -270,15 +270,20 @@ class Library:
         """Find the existing book a file described by (title, author,
         isbn) belongs to, and the basis for that judgment.
 
-        An exact ISBN match wins outright; otherwise the strongest
-        `match_basis` across all books wins, so a TITLE_AUTHOR match
-        is preferred over a TITLE_ONLY one. None if no book matches.
+        An exact ISBN match wins outright -- subject to the same guard
+        `identify` applies to a lookup hit: a shared ISBN whose title
+        *and* author both contradict the file is a scraped false
+        positive, not a match. Otherwise the strongest `match_basis`
+        across all books wins, so a TITLE_AUTHOR match is preferred
+        over a TITLE_ONLY one. None if no book matches.
         """
         existing = self._catalog.all()
 
         if isbn:
             for book in existing:
-                if book.isbn == isbn:
+                if book.isbn == isbn and match_basis(
+                    title, author, book.title, book.author, same_isbn=True
+                ):
                     return book, MatchBasis.ISBN
 
         title_only: Book | None = None

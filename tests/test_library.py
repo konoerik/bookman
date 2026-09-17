@@ -218,6 +218,69 @@ def test_import_file_does_not_group_book_of_job_with_book_of_joel(tmp_path, libr
     assert sorted(book.title for book in library.scan()) == ["The Book of Job", "The Book of Joel"]
 
 
+def test_import_file_keeps_volumes_of_a_set_as_separate_books(tmp_path, library):
+    library.import_file(
+        _make_epub(tmp_path / "a.epub", title="The Lord of the Rings Volume 1", author="Tolkien")
+    )
+    library.import_file(
+        _make_epub(tmp_path / "b.epub", title="The Lord of the Rings Volume 2", author="Tolkien")
+    )
+
+    books = library.scan()
+    assert sorted(book.title for book in books) == [
+        "The Lord of the Rings Volume 1",
+        "The Lord of the Rings Volume 2",
+    ]
+    assert all(len(book.formats) == 1 for book in books)
+
+
+def test_import_file_does_not_group_by_isbn_when_title_and_author_both_disagree(
+    tmp_path, library, source
+):
+    # A false-positive ISBN scraped from two unrelated PDFs, unknown to the
+    # source, so identification keeps it on both. Sharing it must not be
+    # enough to put them in one folder.
+    source.record = None
+    library.import_file(
+        _make_pdf(
+            tmp_path / "a.pdf", title="Deep Work", author="Cal Newport", text=f"ISBN {VALID_ISBN13}"
+        )
+    )
+    book = library.import_file(
+        _make_pdf(
+            tmp_path / "b.pdf",
+            title="Sapiens",
+            author="Yuval Noah Harari",
+            text=f"ISBN {VALID_ISBN13}",
+        )
+    )
+
+    assert book.grouped is None
+    books = library.scan()
+    assert sorted(b.title for b in books) == ["Deep Work", "Sapiens"]
+    assert all(len(b.formats) == 1 for b in books)
+
+
+def test_import_file_rejects_pdf_isbn_of_another_book_by_the_same_author(tmp_path, library, source):
+    # B6: the "Also by Cal Newport" page cites a different book's ISBN.
+    source.record = Candidate(
+        title="So Good They Can't Ignore You", author="Cal Newport", cover_url="sg.jpg"
+    )
+    source.results = [Candidate(title="Deep Work", author="Cal Newport", cover_url="dw.jpg")]
+    source.cover = b"jpeg"
+
+    book = library.import_file(
+        _make_pdf(
+            tmp_path / "a.pdf", title="Deep Work", author="Cal Newport", text=f"ISBN {VALID_ISBN13}"
+        )
+    )
+
+    assert book.identified == MatchBasis.TITLE_AUTHOR
+    assert book.isbn is None
+    assert ("fetch_cover", "dw.jpg") in source.calls
+    assert ("fetch_cover", "sg.jpg") not in source.calls
+
+
 def test_import_file_does_not_group_same_title_different_author(tmp_path, library):
 
     library.import_file(_make_epub(tmp_path / "a.epub", title="Dune", author="Frank Herbert"))
@@ -396,7 +459,11 @@ def test_import_file_does_not_overwrite_reviewed_book_metadata(tmp_path, library
     first = library.import_file(_make_epub(tmp_path / "a.epub", title="Wrong", identifiers=isbn_id))
     _mark_reviewed(library, first, title="Corrected Title", author="Corrected Author")
 
-    result = Candidate(title="Online Title", author="Online Author", cover_url="c.jpg")
+    # The record's title agrees (so the PDF's scraped ISBN is accepted) but
+    # its spelling and author differ from the reviewed values.
+    result = Candidate(
+        title="Corrected Title: Online Subtitle", author="Online Author", cover_url="c.jpg"
+    )
     source.record = result
     book = library.import_file(
         _make_pdf(tmp_path / "b.pdf", title="Corrected Title", text=f"ISBN {VALID_ISBN13}")

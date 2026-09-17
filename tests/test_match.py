@@ -1,3 +1,5 @@
+import pytest
+
 from bookman.identify.match import (
     author_surnames,
     authors_agree,
@@ -115,6 +117,26 @@ def test_titles_agree_allows_small_fuzz_on_normalized_forms():
     assert titles_agree("The Pragmatic Programmer", "Pragmatic Programmer, The")
 
 
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # Long titles: the fuzz alone would swallow the one-digit difference.
+        ("The Lord of the Rings Volume 1", "The Lord of the Rings Volume 2"),
+        ("Introduction to Algorithms", "Introduction to Algorithms 2"),
+        ("The Art of Computer Programming Volume 1", "The Art of Computer Programming"),
+        # Roman numerals are volume markers too.
+        ("Decline and Fall of the Roman Empire II", "Decline and Fall of the Roman Empire III"),
+    ],
+)
+def test_titles_agree_treats_differing_volume_numbers_as_different_books(a, b):
+    assert not titles_agree(a, b)
+
+
+def test_titles_agree_keeps_fuzz_when_numbers_match():
+    assert titles_agree("The Lord of the Rings Volume 1", "Lord of the Rings, Volume 1")
+    assert titles_agree("Fahrenheit 451", "Fahrenheit 451 (50th Anniversary Edition)")
+
+
 # --- match_basis: the Backlog's concrete failure cases ---
 
 
@@ -185,4 +207,43 @@ def test_match_basis_same_isbn_with_title_and_author_both_disagreeing_is_none():
     assert (
         match_basis("My Tax Return 2019", "Jane Doe", "Deep Work", "Cal Newport", same_isbn=True)
         is None
+    )
+
+
+def test_match_basis_scraped_isbn_with_only_author_agreeing_is_none():
+    # "Also by Cal Newport: So Good They Can't Ignore You, ISBN ..." in
+    # Deep Work's front matter: same author, different book.
+    assert (
+        match_basis(
+            "Deep Work",
+            "Cal Newport",
+            "So Good They Can't Ignore You",
+            "Cal Newport",
+            same_isbn=True,
+            isbn_scraped=True,
+        )
+        is None
+    )
+
+
+def test_match_basis_scraped_isbn_with_agreeing_title_is_isbn():
+    # A publisher-as-author PDF (A13): the title corroborates the ISBN.
+    assert (
+        match_basis(
+            "Deep Work",
+            "Manning Publications",
+            "Deep Work",
+            "Cal Newport",
+            same_isbn=True,
+            isbn_scraped=True,
+        )
+        == MatchBasis.ISBN
+    )
+
+
+def test_match_basis_scraped_isbn_without_file_title_is_isbn():
+    # No title to cross-check (a PDF with an empty info dict): the ISBN stands.
+    assert (
+        match_basis(None, None, "Deep Work", "Cal Newport", same_isbn=True, isbn_scraped=True)
+        == MatchBasis.ISBN
     )

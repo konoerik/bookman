@@ -63,6 +63,8 @@ def test_parse_epub_reads_title_author_and_isbn(tmp_path):
     assert result.title == "Structure and Interpretation"
     assert result.author == "Harold Abelson"
     assert result.isbns == [VALID_ISBN13]
+    # dc:identifier is the publisher's own assertion, not a text scan.
+    assert not result.isbns_scraped
 
 
 def test_parse_epub_missing_identifier_returns_empty_isbns(tmp_path):
