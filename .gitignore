@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments and tool caches
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local dev library and config (see Makefile)
+.dev/
+
+# Claude Code: per-machine settings and archived sessions
+.claude/settings.local.json
+.claude/archive/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp

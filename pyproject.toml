@@ -1,0 +1,65 @@
+[project]
+name = "bookman"
+version = "0.1.0"
+description = "Local ebook library management: identify, catalog, and organize EPUB/PDF/MOBI files by title, independent of any frontend."
+readme = "README.md"
+authors = [
+    { name = "Erikton Konomi", email = "konoerik@gmail.com" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+keywords = ["ebook", "epub", "pdf", "library", "metadata", "open-library"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pypdf>=6.18.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/konoerik/bookman"
+Repository = "https://github.com/konoerik/bookman"
+Issues = "https://github.com/konoerik/bookman/issues"
+Changelog = "https://github.com/konoerik/bookman/blob/main/CHANGELOG.md"
+
+[project.scripts]
+bookman = "bookman.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.7,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+packages = ["bookman"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.7",
+]
