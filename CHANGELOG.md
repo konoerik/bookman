@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- A junk title no longer groups unrelated files. A *placeholder* —
+  "Untitled", "Untitled Document 2", "No Title", or a converter's
+  filename stamp ("Microsoft Word - chapter1.docx") — now normalizes to
+  nothing and counts as no title at all: it matches nothing and is no
+  longer searched for on Open Library. A merely *generic* title —
+  "Book", "Final Draft", "New Document" — is still searched and can
+  still be matched, but no longer on its own: it needs an agreeing
+  author, so two unrelated files called "Book" stay two books while
+  Alan Watts' "The Book" is identified as before. Neither kind vetoes a
+  shared ISBN, exactly as a missing title never did.
 - Volumes of a set ("... Volume 1" / "... Volume 2", "Part II" / "Part III")
   no longer merge into one book: the fuzzy title comparison now requires the
   numbers in both titles to match before consulting the similarity ratio.
@@ -19,6 +29,9 @@ All notable changes to this project are documented here. The format follows
   from an EPUB's `dc:identifier` are unaffected.
 
 ### Added
+- `ImportBatchResult` is exported from `bookman` itself, so a frontend
+  reporting an import run no longer has to import it from
+  `bookman.library`.
 - `ParsedMetadata.isbns_scraped` records whether a parser found its ISBNs
   by scanning text (PDF) rather than in a metadata field (EPUB);
   `match_basis` takes a matching `isbn_scraped` keyword.

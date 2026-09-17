@@ -224,3 +224,36 @@ def test_identify_does_nothing_without_title_or_isbn(source):
     assert found.basis is None
     assert found.title is None
     assert found.author == "Cal Newport"
+
+
+def test_identify_does_not_search_on_a_placeholder_title(source):
+    # FEATURES A12: "Untitled" would only return whatever Open Library
+    # happens to rank first, and match_basis would reject all of it.
+    source.results = [DEEP_WORK]
+
+    found = identify(_parsed(title="Untitled", author=None), source)
+
+    assert not source.called("search")
+    assert found.basis is None
+    assert found.title == "Untitled"  # left alone for the user to correct
+
+
+def test_identify_still_searches_a_real_title_containing_a_placeholder_word(source):
+    source.results = [Candidate(title="The Book Thief", author="Markus Zusak", cover_url="bt.jpg")]
+
+    found = identify(_parsed(title="The Book Thief", author="Markus Zusak"), source)
+
+    assert source.called("search")
+    assert found.basis == MatchBasis.TITLE_AUTHOR
+
+
+def test_identify_searches_a_generic_title_and_lets_the_author_settle_it(source):
+    # A generic title is still searched -- with the author alongside it,
+    # that is how Alan Watts' "The Book" gets its cover.
+    source.results = [Candidate(title="The Book", author="Watts, Alan", cover_url="tb.jpg")]
+
+    found = identify(_parsed(title="The Book", author="Alan Watts"), source)
+
+    assert source.called("search")
+    assert found.basis == MatchBasis.TITLE_AUTHOR
+    assert found.cover_url == "tb.jpg"

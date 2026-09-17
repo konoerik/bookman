@@ -25,6 +25,27 @@ _AUTHOR_SEPARATORS = re.compile(r"\s*(?:;|&|\band\b)\s*")
 _NUMBER_TOKEN = re.compile(r"^(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3}))$")
 # "Authors" that name nobody and so can't corroborate anything.
 _NON_AUTHORS = frozenset({"anonymous", "anon", "unknown", "various", "unknown author"})
+# Junk titles come in two strengths (docs/FEATURES.md A12).
+#
+# Placeholder words name no book at all: nothing is ever really called
+# "Untitled" or "No Title", so such a title is discarded outright by
+# `normalize_title` and compares as if the file had no title.
+_PLACEHOLDER_TITLE_WORDS = frozenset("untitled unknown none no title default".split())
+# Generic words *could* be a real title -- Alan Watts really did write
+# "The Book" -- but say almost nothing on their own. A title built only
+# from these survives normalization and can still be corroborated by an
+# agreeing author; what it cannot do is carry a match by itself.
+_GENERIC_TITLE_WORDS = frozenset(
+    "book ebook document doc file text draft copy final new scan scanned version pdf epub".split()
+)
+_JUNK_TITLE_WORDS = _PLACEHOLDER_TITLE_WORDS | _GENERIC_TITLE_WORDS
+# What a converter writes into /Title when the document never had one:
+# the source filename, prefixed by the application ("Microsoft Word -
+# chapter1.docx"). Matched against the raw title, since normalization
+# would strip everything after the " - " and leave only the app name.
+_CONVERTER_TITLE = re.compile(
+    r"^(?:microsoft\s+\w+|adobe\s+acrobat\w*|libreoffice|openoffice|pages|scrivener)\s+-\s"
+)
 
 
 def normalize_title(title: str) -> str:
@@ -35,12 +56,22 @@ def normalize_title(title: str) -> str:
     parenthesized/bracketed groups (edition notes), strips a leading
     English article, removes punctuation, and collapses whitespace.
 
+    A title that names no book -- a placeholder ("Untitled", "Untitled
+    Document 2", "No Title") or a converter's filename stamp ("Microsoft
+    Word - chapter1.docx") -- normalizes to the empty string, because it
+    is no better evidence than having no title at all. Without this, two
+    unrelated files both titled "Untitled" compare as the same book
+    (docs/FEATURES.md A12). A merely *generic* title ("Book", "Final
+    Draft") survives here and is weakened later instead, in `match_basis`
+    -- see `is_generic_title`.
+
     Args:
         title: A raw title as parsed from a file or returned by a lookup.
 
     Returns:
-        The normalized title. May be empty if nothing survives (e.g. the
-        title was only punctuation).
+        The normalized title, or the empty string if nothing survives
+        (the title was only punctuation) or nothing was ever there (a
+        placeholder title).
     """
     text = unicodedata.normalize("NFKC", title).casefold().strip()
     text = _SUBTITLE_SEPARATORS.split(text, maxsplit=1)[0]
@@ -51,7 +82,50 @@ def normalize_title(title: str) -> str:
         text = stripped
     text = _LEADING_ARTICLE.sub("", text)
     text = _NON_WORD.sub(" ", text)
-    return _WHITESPACE.sub(" ", text).strip()
+    normalized = _WHITESPACE.sub(" ", text).strip()
+    return "" if _is_junk_title(title, normalized) else normalized
+
+
+def _is_junk_title(raw: str, normalized: str) -> bool:
+    """Whether a title names nothing at all: a converter's filename
+    stamp, or a normalized form built only from junk words and numbers,
+    at least one of which is an outright placeholder. "Untitled
+    Document" qualifies; "New Document" is merely generic, and "Untitled
+    Poem" is a real title that happens to start with a junk word."""
+    if _CONVERTER_TITLE.match(unicodedata.normalize("NFKC", raw).casefold().strip()):
+        return True
+    words = _meaningful_words(normalized)
+    return (
+        bool(normalized)
+        and all(word in _JUNK_TITLE_WORDS for word in words)
+        and any(word in _PLACEHOLDER_TITLE_WORDS for word in words)
+    )
+
+
+def is_generic_title(normalized_title: str) -> bool:
+    """Whether a *normalized* title is built only from generic words
+    ("book", "final draft", "new document 2").
+
+    Such a title is too weak to establish a match on its own -- two
+    unrelated files called "Book" are not one book -- but it is not
+    nothing: an agreeing author can still corroborate it, which is what
+    keeps a real title like Alan Watts' "The Book" identifiable.
+    """
+    words = _meaningful_words(normalized_title)
+    return bool(normalized_title) and all(word in _GENERIC_TITLE_WORDS for word in words)
+
+
+def _meaningful_words(normalized_title: str) -> list[str]:
+    """The words of a normalized title, ignoring bare numbers (so
+    "untitled 2" reads the same as "untitled")."""
+    return [w for w in normalized_title.split() if not _NUMBER_TOKEN.match(w)]
+
+
+def is_usable_title(title: str) -> bool:
+    """Whether a title is worth searching on, i.e. whether anything
+    survives `normalize_title`. A generic title counts: searching it
+    together with an author is how such a book gets identified."""
+    return bool(normalize_title(title))
 
 
 def author_surnames(author: str) -> set[str]:
@@ -126,6 +200,10 @@ def titles_agree(a: str, b: str) -> bool:
     long the shared prefix, so the number tokens of both normalized
     forms must match exactly before the ratio is consulted.
 
+    A title that normalizes away to nothing -- only punctuation, or a
+    placeholder like "Untitled" -- agrees with nothing, not even another
+    empty one.
+
     Args:
         a: A raw title.
         b: A raw title.
@@ -134,6 +212,8 @@ def titles_agree(a: str, b: str) -> bool:
         True if the normalized titles are identical or nearly so.
     """
     na, nb = normalize_title(a), normalize_title(b)
+    if not na or not nb:
+        return False
     if na == nb:
         return True
     if _number_tokens(na) != _number_tokens(nb):
@@ -175,6 +255,14 @@ def match_basis(
       are *identical* (no fuzz): TITLE_ONLY.
     - Otherwise None.
 
+    A title is "present" only if it survives `normalize_title`, so a
+    placeholder ("Untitled") counts as no title at all: it can neither
+    carry a match nor veto an ISBN. A merely generic title ("Book",
+    "Final Draft" -- see `is_generic_title`) is weaker still than it
+    looks: it says too little to match on its own or to contradict an
+    ISBN, so it can only reach TITLE_AUTHOR, where an agreeing author
+    does the real work.
+
     Args:
         file_title: Title from the file, or None.
         file_author: Author from the file, or None.
@@ -189,12 +277,17 @@ def match_basis(
     Returns:
         The basis on which they match, or None if they don't.
     """
-    have_titles = bool(file_title) and bool(cand_title)
+    norm_file = normalize_title(file_title) if file_title else ""
+    norm_cand = normalize_title(cand_title) if cand_title else ""
+    have_titles = bool(norm_file) and bool(norm_cand)
+    generic = is_generic_title(norm_file) or is_generic_title(norm_cand)
     title_ok = have_titles and titles_agree(file_title or "", cand_title or "")
     author_ok = authors_agree(file_author, cand_author)
 
     if same_isbn:
-        if have_titles and not title_ok and (isbn_scraped or author_ok is False):
+        # A generic title carries no argument against an ISBN, so it
+        # doesn't get to veto one.
+        if have_titles and not generic and not title_ok and (isbn_scraped or author_ok is False):
             return None
         return MatchBasis.ISBN
 
@@ -204,9 +297,9 @@ def match_basis(
         return MatchBasis.TITLE_AUTHOR if title_ok else None
     if author_ok is False:
         return None
-    # No author evidence: require the strict form of title equality.
-    normalized = normalize_title(file_title or "")
-    if normalized and normalized == normalize_title(cand_title or ""):
+    # No author evidence: require the strict form of title equality,
+    # and a title that actually distinguishes this book from another.
+    if norm_file == norm_cand and not generic:
         return MatchBasis.TITLE_ONLY
     return None
 

@@ -53,7 +53,7 @@ What the file says about itself: title (T), author (A), ISBN (I).
 | A9 | Placeholder author ("Anonymous", "Unknown", "Various") | Treated as no author → A3 path | ✅ 🟢 | `test_match::author_surnames_ignores_placeholders`; live: Lazarillo keeps "Anonymous" |
 | A10 | Several ISBNs in one file (print + ebook, or a cited list) | Try each until one agrees | ❌ | Only `isbns[0]` is looked up (`resolve.identify`); if it is unknown to OL the rest are never tried |
 | A11 | Title is whitespace/empty string | Treated as missing (A4/A8) | ❓ | `pdf._clean` strips; EPUB path unverified |
-| A12 | Generic junk title ("Untitled", "Microsoft Word - final.docx", "Book") with no author | No match; `needs_review` | ❌ | `match_basis("Untitled", None, "Untitled", "X")` → `title_only`: a junk title can accept a junk OL record and would group unrelated junk-titled files together |
+| A12 | Generic junk title ("Untitled", "Microsoft Word - final.docx", "Book") with no author | No match; `needs_review` | ✅ | Two tiers. **Placeholder** ("Untitled", "Untitled Document 2", "No Title", converter stamps like "Microsoft Word - x.docx"): `normalize_title` returns "", so it counts as no title — it cannot match at all and is not searched for. **Generic** ("Book", "Final Draft", "New Document"): survives normalization, so it is still searched, but `match_basis` refuses it on the TITLE_ONLY path — it only reaches TITLE_AUTHOR, where an agreeing author does the work. Neither tier vetoes an ISBN, the same as a missing title. Keeps a real title like Alan Watts' "The Book" identifiable. Tests: `test_match::normalize_title_of_a_placeholder_is_empty`, `a_generic_title_survives_normalization_but_is_flagged`, `normalize_title_keeps_a_real_title_containing_a_junk_word`, `match_basis_two_placeholder_titles_do_not_match`, `match_basis_two_generic_titles_do_not_match_without_an_author`, `match_basis_generic_title_still_matches_when_the_author_agrees`, `match_basis_junk_title_does_not_veto_an_isbn`; `test_library::keeps_placeholder_titled_files_as_separate_books`, `keeps_generic_titled_files_as_separate_books`, `groups_generic_titled_files_when_the_author_agrees`; `test_resolve::does_not_search_on_a_placeholder_title`, `searches_a_generic_title_and_lets_the_author_settle_it` |
 | A13 | PDF `/Author` is a publisher or tool ("Manning Publications", "Adobe InDesign") | Author disagrees → no match, `needs_review`; author string stored as-is | ❓ | Safe direction (`match_basis` → None) but the bogus author is kept and shown; untested |
 | A14 | Multiple `dc:creator` (co-authors) | All authors kept | ⚠️ | `epub._first_text` keeps only the first creator; matching still works via shared surname but the stored author is incomplete |
 | A15 | `dc:creator` is an editor/translator, not the author (EPUB3 `role` refine) | Author role respected | ❌ | Roles are not read; an editor is stored as the author. Live: Bassett/Carroll retold edition matched only because both names appear |
@@ -205,9 +205,10 @@ leave a book unidentified, because the latter are already surfaced by
    `_find_book`'s ISBN branch runs `match_basis(..., same_isbn=True)`.
 4. **F14 — same-kind format silently overwritten.** Needs a decision
    (reject? version? report?) before code.
-5. **A12 — junk titles `title_only`-match each other.** A short
-   stop-list ("untitled", "book", "document", tool-generated
-   "Microsoft Word - …") turning into "no title" closes it.
+5. ~~**A12 — junk titles `title_only`-match each other.**~~ Closed in
+   two tiers: a placeholder title ("Untitled") normalizes to "" and so
+   counts as no title, while a merely generic one ("Book") is barred
+   from TITLE_ONLY but can still be corroborated by an author.
 6. **A10 — only the first ISBN is tried.**
 7. **D9 — "Jr."/"Sr."/"III" become the surname.**
 8. **C10, H11, A15, A16, D11** — books left unidentified for
@@ -298,7 +299,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | ID | Operation | Why | Status | Public API / notes |
 |---|---|---|---|---|
 | L1 | Import one file / a directory (optionally recursive) | Core | ✅ | `import_file`, `import_directory(recursive=)` |
-| L2 | Batch result reporting: imported / failed / skipped | Tell the user what happened | ✅ | `ImportBatchResult` — but not exported from `bookman.__init__` (a frontend imports it from `bookman.library`) |
+| L2 | Batch result reporting: imported / failed / skipped | Tell the user what happened | ✅ | `ImportBatchResult`, exported from `bookman.__init__`; pinned by `test_public_api::batch_result_is_exported_from_the_package_root` |
 | L3 | Progress callback / streaming results | TUI progress bar on a 40-book bundle with network per book | ❌ | `import_directory` returns only when done |
 | L4 | Cancel an in-progress batch | TUI responsiveness | ❌ | Follows from L3's shape (generator or callback) |
 | L5 | Dry run / preview: "here is what would happen" | Confidence before touching the library | ❌ | Needs identify + `_find_book` without the copy/save step |
@@ -306,7 +307,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | L7 | Copy vs. move source files | Users who want the bundle folder gone | 🔶 💬 | Copy only (G10); a `move=` flag is cheap but changes the safety story |
 | L8 | Adopt files dropped into the library folder by hand | Users who manage some folders manually | ❌ | `scan()` skips folders without metadata.json |
 | L9 | Offline mode / no-network import | Airplane, rate limits, privacy | ❌ | Lookups run unconditionally; failures degrade gracefully (E9) but each costs a timeout |
-| L10 | Exceptions a frontend can catch by name | Distinguish "bad file" from "disk full" | 🔶 | `BadEpubError`/`BadPdfError` documented on `import_file` but not exported (Backlog) |
+| L10 | Exceptions a frontend can catch by name | Distinguish "bad file" from "disk full" | ✅ | All nine live under `BookmanError` and are exported from `bookman.__init__`; `test_errors` pins the hierarchy and that every exported error is a `BookmanError` |
 | L11 | MOBI / AZW3 parsing | Bundles ship them | ❌ | ROADMAP Phase 2; ADR-2 |
 | L12 | Bundle-level hints (Humble page title list) | Bias matching for a known batch | 🚫 | ROADMAP Ideas — deferred, not planned |
 
@@ -327,7 +328,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | ID | Concern | Why | Status | Notes |
 |---|---|---|---|---|
 | N1 | Library location resolution shared by all frontends | One config, no drift | ✅ | ADR-8 |
-| N2 | Minimal, explicit public surface | Semver discipline | ✅ 🔶 | `__all__` exists; `ImportBatchResult`, format errors are used but not exported (L2, L10) |
+| N2 | Minimal, explicit public surface | Semver discipline | ✅ | `__all__` is the contract, pinned by `test_public_api` (every name resolves, sorted, no duplicates); everything a frontend uses is exported (L2, L10) |
 | N3 | Type hints + docstrings on everything public | TUI author can rely on signatures | ✅ | Convention; mypy clean |
 | N4 | Network configuration: timeouts, user-agent, endpoint override, disable | Tests, rate limits, mirrors | ❌ | Hard-coded in `identify.openlibrary` |
 | N5 | Logging instead of silence | Frontend can show "lookup failed: timeout" | ❌ | Failures are swallowed into "no match"; no `logging` calls |

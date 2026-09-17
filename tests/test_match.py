@@ -3,6 +3,8 @@ import pytest
 from bookman.identify.match import (
     author_surnames,
     authors_agree,
+    is_generic_title,
+    is_usable_title,
     match_basis,
     normalize_title,
     titles_agree,
@@ -245,5 +247,129 @@ def test_match_basis_scraped_isbn_without_file_title_is_isbn():
     # No title to cross-check (a PDF with an empty info dict): the ISBN stands.
     assert (
         match_basis(None, None, "Deep Work", "Cal Newport", same_isbn=True, isbn_scraped=True)
+        == MatchBasis.ISBN
+    )
+
+
+# --- junk titles (FEATURES A12) ---
+#
+# Two tiers. A *placeholder* names no book at all and is discarded by
+# normalize_title. A *generic* title could be real ("The Book"), so it
+# survives, but it can't carry a match without an agreeing author.
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    [
+        "Untitled",
+        "untitled",
+        "UNTITLED",
+        "Untitled 1",
+        "Untitled-1",
+        "Untitled Document",
+        "Untitled Document 2",
+        "Unknown",
+        "No Title",
+        "Default",
+        "Microsoft Word - chapter1.docx",
+        "Microsoft Word - Deep Work FINAL.doc",
+        "Microsoft PowerPoint - deck.pptx",
+        "LibreOffice - notes.odt",
+    ],
+)
+def test_normalize_title_of_a_placeholder_is_empty(placeholder):
+    assert normalize_title(placeholder) == ""
+    assert not is_usable_title(placeholder)
+
+
+@pytest.mark.parametrize(
+    "generic",
+    ["Book", "The Book", "eBook", "Document", "New Document", "Final Draft", "Scanned Document"],
+)
+def test_a_generic_title_survives_normalization_but_is_flagged(generic):
+    normalized = normalize_title(generic)
+    assert normalized != ""
+    assert is_generic_title(normalized)
+    # It is still worth searching for: the author is what identifies it.
+    assert is_usable_title(generic)
+
+
+@pytest.mark.parametrize(
+    "real",
+    [
+        "The Book Thief",
+        "The Book of Job",
+        "Untitled Poem",
+        "Microsoft Word 2019 Step by Step",
+        "The New York Trilogy",
+        "Document Z",
+        "Dune",
+        "Version Control with Git",
+    ],
+)
+def test_normalize_title_keeps_a_real_title_containing_a_junk_word(real):
+    normalized = normalize_title(real)
+    assert normalized != ""
+    assert not is_generic_title(normalized)
+    assert is_usable_title(real)
+
+
+def test_titles_agree_is_false_for_two_placeholders():
+    assert not titles_agree("Untitled", "Untitled")
+    assert not titles_agree("...", "...")
+
+
+def test_match_basis_two_placeholder_titles_do_not_match():
+    # The A12 gap: two unrelated files, each titled "Untitled", used to
+    # come back TITLE_ONLY and be filed as one book.
+    assert match_basis("Untitled", None, "Untitled", None) is None
+    assert match_basis("Untitled", None, "Untitled", "Cal Newport") is None
+    assert match_basis("Microsoft Word - a.docx", None, "Microsoft Word - b.docx", None) is None
+
+
+def test_match_basis_placeholder_title_cannot_carry_an_author_match():
+    # Nothing is called "Untitled", so a shared surname corroborates nothing.
+    assert match_basis("Untitled", "Cal Newport", "Deep Work", "Cal Newport") is None
+    assert match_basis("Untitled", "Alan Watts", "Untitled", "Alan Watts") is None
+
+
+def test_match_basis_two_generic_titles_do_not_match_without_an_author():
+    # The other half of A12: unrelated files a template left titled "Book".
+    assert match_basis("Book", None, "Book", None) is None
+    assert match_basis("Book", None, "Book", "Cal Newport") is None
+    assert match_basis("New Document", None, "New Document", None) is None
+
+
+def test_match_basis_generic_title_still_matches_when_the_author_agrees():
+    # Alan Watts really did write "The Book": a generic title is weak,
+    # not worthless, and an agreeing author is enough to redeem it.
+    assert (
+        match_basis(
+            "The Book: On the Taboo Against Knowing Who You Are",
+            "Alan Watts",
+            "The Book",
+            "Watts, Alan",
+        )
+        == MatchBasis.TITLE_AUTHOR
+    )
+
+
+def test_match_basis_junk_title_does_not_veto_an_isbn():
+    # Neither tier is an argument *against* a shared ISBN: a title that
+    # says nothing can't contradict, just as a missing title can't.
+    assert (
+        match_basis("Untitled", "Jane Doe", "Deep Work", "Cal Newport", same_isbn=True)
+        == MatchBasis.ISBN
+    )
+    assert (
+        match_basis("Book", "Jane Doe", "Deep Work", "Cal Newport", same_isbn=True)
+        == MatchBasis.ISBN
+    )
+    assert (
+        match_basis("Untitled", None, "Deep Work", "Cal Newport", same_isbn=True, isbn_scraped=True)
+        == MatchBasis.ISBN
+    )
+    assert (
+        match_basis("Book", None, "Deep Work", "Cal Newport", same_isbn=True, isbn_scraped=True)
         == MatchBasis.ISBN
     )

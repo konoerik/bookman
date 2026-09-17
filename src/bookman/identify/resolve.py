@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from bookman.formats.base import ParsedMetadata
-from bookman.identify.match import match_basis
+from bookman.identify.match import is_usable_title, match_basis
 from bookman.identify.source import Candidate, MetadataSource, MetadataSourceError
 from bookman.models import MatchBasis, stronger_basis
 
@@ -52,7 +52,8 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
        or, for an ISBN scraped from page text, the titles agree. If
        it's rejected, the ISBN is dropped from the result too, so a
        false-positive ISBN can't later seed an ISBN-based grouping.
-    2. Otherwise, if the file has a title, search by title (and author,
+    2. Otherwise, if the file has a usable title -- a placeholder like
+       "Untitled" is not one -- search by title (and author,
        if known) and accept the best candidate `match_basis` agrees
        with: the strongest basis wins, and among equals the first (in
        the source's relevance order) that has a cover, since a cover
@@ -100,8 +101,8 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
                 file_isbn, record.title, record.author, parsed.title, parsed.author,
             )
 
-    if parsed.title:
-        file_title = parsed.title
+    file_title = parsed.title
+    if file_title and is_usable_title(file_title):
         candidates = _safe(
             lambda: source.search(file_title, parsed.author), f"search {file_title!r}"
         ) or []

@@ -29,7 +29,7 @@ from bookman.formats.epub import BadEpubError
 from bookman.formats.pdf import BadPdfError
 from bookman.identify.openlibrary import OpenLibraryError, OpenLibrarySource
 from bookman.identify.source import Candidate, MetadataSource, NullSource
-from bookman.library import Library
+from bookman.library import ImportBatchResult, Library
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis
 
 # Library convention: emit under the "bookman" logger and let the
@@ -47,6 +47,7 @@ __all__ = [
     "Config",
     "ConfigError",
     "FormatKind",
+    "ImportBatchResult",
     "Library",
     "LibraryNotConfiguredError",
     "MatchBasis",

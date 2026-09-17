@@ -234,6 +234,47 @@ def test_import_file_keeps_volumes_of_a_set_as_separate_books(tmp_path, library)
     assert all(len(book.formats) == 1 for book in books)
 
 
+def test_import_file_keeps_placeholder_titled_files_as_separate_books(tmp_path, library, source):
+    # FEATURES A12: two unrelated documents a converter left titled
+    # "Untitled" are not one book, however identical those titles are.
+    source.results = []
+
+    library.import_file(_make_epub(tmp_path / "a.epub", title="Untitled", author=None))
+    library.import_file(_make_epub(tmp_path / "b.epub", title="Untitled", author=None))
+
+    books = library.scan()
+    assert len(books) == 2
+    assert all(len(book.formats) == 1 for book in books)
+    assert sorted(book.formats[0].path.parent.name for book in books) == [
+        "Untitled",
+        "Untitled (2)",
+    ]
+
+
+def test_import_file_keeps_generic_titled_files_as_separate_books(tmp_path, library, source):
+    # The other half of A12: a template's "Book", with no author to
+    # corroborate it, is not evidence that these are the same book.
+    source.results = []
+
+    library.import_file(_make_epub(tmp_path / "a.epub", title="Book", author=None))
+    library.import_file(_make_epub(tmp_path / "b.epub", title="Book", author=None))
+
+    assert len(library.scan()) == 2
+
+
+def test_import_file_groups_generic_titled_files_when_the_author_agrees(tmp_path, library, source):
+    # ... but "The Book" by Alan Watts is a real book, and its EPUB and
+    # PDF still belong together.
+    source.results = []
+
+    library.import_file(_make_epub(tmp_path / "a.epub", title="The Book", author="Alan Watts"))
+    book = library.import_file(_make_pdf(tmp_path / "a.pdf", title="The Book", author="Alan Watts"))
+
+    assert len(library.scan()) == 1
+    assert len(book.formats) == 2
+    assert book.grouped == MatchBasis.TITLE_AUTHOR
+
+
 def test_import_file_does_not_group_by_isbn_when_title_and_author_both_disagree(
     tmp_path, library, source
 ):
