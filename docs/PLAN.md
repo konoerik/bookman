@@ -4,9 +4,8 @@
 <!-- Current sprint items. Keep this short — 5-10 items max.
      If it grows beyond that, move lower-priority items to Backlog. -->
 
-Remaining v1.0 work (FEATURES *v1.0 scope*), in harm order:
-
-1. **F14** — blocked on OQ1.
+Remaining v1.0 work (FEATURES *v1.0 scope*): none unblocked. Every
+item left is a decision (below).
 
 Decisions needed (they block behavior, not the list above):
 - **File's author stands on a corroborated match** (IDENT-6): on a
@@ -18,7 +17,6 @@ Decisions needed (they block behavior, not the list above):
   `_accepted`. OL has no role field anywhere, so this is the only fix
   that works from every lookup route.
 - **OQ3 / C7** — is a different edition a different book?
-- **OQ1 / F14** — two files of the same format kind for one book.
 - Volumes: C17 keeps them apart. Should they also be *related* (I6
   series/volume), or is "separate and unmerged" the v1.0 answer?
 
@@ -29,7 +27,7 @@ Decisions needed (they block behavior, not the list above):
 - Cache at the `MetadataSource` seam (ADR-13): `import_file` runs `identify` (network) *before* `_find_book` (catalog), by design — GROUP-4 needs the follow-up format's own identification to decide upgrade/no-downgrade (F7/F8). So the PDF of an already-shelved EPUB does the full Open Library round-trip again. Fix is a memoizing wrapper source, not a reorder: per import batch at minimum, or persisted in the library so a re-imported ISBN never hits the network. No spec change. (Raised 2026-09-18.)
 - Matching follow-ups (from the live Gutenberg smoke run after ADR-9): author agreement is surname-only, so "Frank Herbert" vs "Brian Herbert" count as the same author (pinned in `test_match.py` as a known limitation); a title whose subtitle follows a period ("A CHRISTMAS CAROL IN PROSE. Being a Ghost Story...") isn't split, since ". " also appears inside titles ("Mr. Darcy..."); Open Library title search is sent the raw file title, so a long Gutenberg-style title only surfaces the cover-less Gutenberg-derived records — acceptable, but a second search on the normalized short title could find a cover.
 - MOBI parser (`formats/mobi.py`): one module exposing a `FormatParser` plus a `register(".mobi", FormatKind.MOBI, parse_mobi)` in `formats/__init__.py` (R7 made this a drop-in). Two sample files still skipped — and staying skipped: deprioritized below v1.0 on 2026-09-18 (legacy Amazon format, most expensive parser under ADR-3; see ADR-2 Amendment and FEATURES L11).
-- Feature map follow-ups (docs/FEATURES.md, 2026-09-15): remaining Part I gaps from its "Gap summary" — F14 same-kind format silently overwritten (needs a decision: reject / version / report — really I11 + L6). (A10 and D9 closed 2026-09-18.) (C17, B6, B10 closed 2026-09-16; A12 junk titles and L2/L10 exports closed 2026-09-17.) Part II first slice: I5 stable id (R2), K1 set reviewed, K2 edit fields.
+- Feature map follow-ups (docs/FEATURES.md, 2026-09-15): remaining Part I gaps from its "Gap summary" — none; F14 closed 2026-09-18 (ADR-21), A10 and D9 the same day. (C17, B6, B10 closed 2026-09-16; A12 junk titles and L2/L10 exports closed 2026-09-17.) Part II first slice: I5 stable id (R2), K1 set reviewed, K2 edit fields.
 - Release hygiene leftovers: import copies the file before loading metadata (orphan on failed save); document single-writer assumption / lock file. (README, CHANGELOG, CI, LICENSE done 2026-09-16.)
 - Known accepted risk: EPUB parsing uses stdlib `xml.etree.ElementTree` with no entity-expansion guard (billion-laughs). Fixing needs a new dependency (`defusedxml`), which conflicts with the pypdf-only dependency policy (ADR-3) — deliberately not fixed for now.
 - `_sanitize_dirname` doesn't reject Windows-reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) — irrelevant on macOS today, worth a note if Windows ever becomes a target.
@@ -38,6 +36,7 @@ Decisions needed (they block behavior, not the list above):
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- F14 / OQ1 (2026-09-18, ADR-21): a same-kind file is **refused**, never overwritten; `FormatConflictError` carries book, existing file, join basis and the incoming identification; `ImportBatchResult.conflicts`. The OQ1 blocker (needs I11) was wrong — the folder's copy is what a byte comparison needs. spec_version 2. K11 (replace) and K12 (import as separate book) recorded as the deferred resolutions. 446 tests.
 - CLI commands for K1–K3 (2026-09-18, ADR-20): `review [--undo]`, `edit --title/--author/--no-author/--isbn/--no-isbn`, `reidentify`; BOOK resolves as folder name → id → exact title, shared titles refused. N7 back to ✅. 437 tests. Immediately questioned whether hand-editing via CLI is worth keeping — see Backlog.
 - A10 (2026-09-18): `resolve.identify` walks every ISBN in turn (IDENT-1) — a rejected one is dropped, the first unknown one kept, the first accepted one wins. The one open spec divergence, closed; seen live with a three-ISBN EPUB.
 - ISBN lookup migrated (2026-09-18): Open Library's `/api/books` returns 404 on every bibkey (their docs' own example included, any User-Agent), so `lookup_by_isbn` now goes through `search.json?isbn=` — one request, same doc shape as title search. Requests carry a `bookman/<version>` User-Agent. Cost noted: author names on an ISBN hit are now work-level.

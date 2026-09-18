@@ -683,3 +683,45 @@ def test_help_lists_the_curation_commands(capsys):
     out = capsys.readouterr().out
     for name in ("review", "edit", "reidentify"):
         assert name in out
+
+
+# --- F14: a refused same-kind import is reported, not hidden (ADR-21) ----
+
+
+def test_import_reports_a_refused_same_kind_file(tmp_path, capsys):
+    library_root = tmp_path / "Library"
+    Library(library_root).import_file(
+        _make_epub(tmp_path / "shelved.epub", title="Deep Work", author="Cal Newport")
+    )
+    second = _make_epub(
+        tmp_path / "second.epub",
+        title="Deep Work",
+        author="Cal Newport",
+        identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+    )
+
+    code = cli.main(["-l", str(library_root), "import", str(second)])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert f'not imported: {second}: "Deep Work" already has a different epub' in err
+    assert "same title and author" in err
+    assert f"delete {library_root / 'Deep Work' / 'Deep Work.epub'} and import again" in err
+    assert "failed" not in err
+
+
+def test_import_directory_counts_conflicts_apart_from_failures(tmp_path, capsys):
+    library_root = tmp_path / "Library"
+    Library(library_root).import_file(_make_epub(tmp_path / "shelved.epub", title="Dune"))
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    _make_epub(bundle / "dune.epub", title="Dune", author="Ada Lovelace")
+    _make_epub(bundle / "sapiens.epub", title="Sapiens")
+
+    code = cli.main(["-l", str(library_root), "import", str(bundle)])
+
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert "imported: Sapiens" in out
+    assert "1 imported, 0 failed, 1 not imported (already have that format)" in out
+    assert "same title only -- check it is really the same book" in err

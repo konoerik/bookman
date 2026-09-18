@@ -22,6 +22,17 @@ All notable changes to this project are documented here. The format follows
   [--isbn I | --no-isbn]` and `bookman reidentify BOOK`. BOOK is the
   title as `list` prints it, the book's folder name, or its id; a title
   shared by several books is refused with their folder names listed.
+- A book now holds one file per format kind, and an import that would
+  put a *different* file where one already is — a second EPUB edition, or
+  two unrelated books that grouped by title — is refused instead of
+  silently overwriting it. `Library.import_file` raises
+  `FormatConflictError`, which carries the book, the file it already
+  holds, how the file joined it (ISBN, title and author, or title only)
+  and what the refused file resolved to, so a frontend can ask the user
+  what they meant. `Library.import_directory` collects these in
+  `ImportBatchResult.conflicts`, separate from `failed`. Re-importing the
+  same file (same bytes, any name) stays idempotent. `bookman import`
+  reports each refusal with the reason and how to replace the file.
 - `Book.id` — a stable identity minted once per book and stored in
   `metadata.json`, which moves to schema version 3. Unlike `Book.directory`
   it survives a rename of the book's folder, so a frontend can hold a

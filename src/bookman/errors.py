@@ -13,6 +13,13 @@ their parsers and subclass `ParseError`; the Open Library client's
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bookman.models import Book, MatchBasis
+
 
 class BookmanError(Exception):
     """Base class for every exception bookman raises deliberately."""
@@ -39,6 +46,51 @@ class CatalogError(BookmanError, ValueError):
     asked to be saved somewhere it cannot go."""
 
 
+class FormatConflictError(BookmanError):
+    """A file was refused because the book it belongs to already holds a
+    different file of the same format kind (spec GROUP-4, ADR-21).
+
+    Nothing was changed: not the folder, not the catalog, not the book's
+    evidence. The attributes are what a person needs to decide what to
+    do -- keep what's there, replace it by hand, or conclude the two were
+    never the same book.
+
+    Attributes:
+        source: The file that was refused.
+        book: The cataloged book it would have joined, as it stands.
+        existing: The file of the same kind the book already holds.
+        basis: How the file joined that book. An ISBN join says "same
+            book, which file do you want?"; a TITLE_ONLY join says "was
+            this even the same book?".
+        title: What the refused file resolved to, so it can be shown
+        author: beside the book it collided with.
+        isbn: (Likewise.)
+    """
+
+    def __init__(
+        self,
+        source: Path,
+        book: Book,
+        existing: Path,
+        basis: MatchBasis,
+        *,
+        title: str,
+        author: str | None,
+        isbn: str | None,
+    ) -> None:
+        self.source = source
+        self.book = book
+        self.existing = existing
+        self.basis = basis
+        self.title = title
+        self.author = author
+        self.isbn = isbn
+        super().__init__(
+            f"{source}: {book.title!r} already has a different {existing.suffix.lstrip('.')} "
+            f"file ({existing.name}); joined by {basis.value}"
+        )
+
+
 class ConfigError(BookmanError, ValueError):
     """The user config file exists but is not valid."""
 
@@ -51,6 +103,7 @@ __all__ = [
     "BookmanError",
     "CatalogError",
     "ConfigError",
+    "FormatConflictError",
     "LibraryNotConfiguredError",
     "MetadataSourceError",
     "ParseError",

@@ -5,13 +5,14 @@ for a consumer (e.g. the companion TUI) once implemented.
 
 from __future__ import annotations
 
+import filecmp
 import logging
 import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bookman.errors import CatalogError, MetadataSourceError
+from bookman.errors import CatalogError, FormatConflictError, MetadataSourceError
 from bookman.formats import is_supported, parser_for
 from bookman.formats.base import ParsedMetadata
 from bookman.identify.isbn import is_valid_isbn, normalize_isbn
@@ -49,6 +50,7 @@ class _Unset:
 
 _UNSET = _Unset()
 
+
 @dataclass
 class ImportBatchResult:
     """The outcome of importing every supported file in a directory.
@@ -61,11 +63,17 @@ class ImportBatchResult:
         skipped: Non-hidden files with no registered format parser
             (e.g. a bundle's .mobi). Not an error, but the user should
             hear that they weren't imported.
+        conflicts: Files refused because the book they belong to already
+            holds a different file of the same kind (spec GROUP-4,
+            ADR-21). Not a failure: nothing is wrong with the file, and
+            nothing was changed. Each carries what a frontend needs to
+            ask the user what they meant -- see `FormatConflictError`.
     """
 
     imported: list[tuple[Path, Book]] = field(default_factory=list)
     failed: list[tuple[Path, Exception]] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
+    conflicts: list[FormatConflictError] = field(default_factory=list)
 
 
 class Library:
@@ -118,9 +126,12 @@ class Library:
               by an unrelated folder).
         4. Copy (not move -- the source file is left in place)
            `path` into that folder as `<folder name><suffix>`, so every
-           format of a book shares its folder's name. An existing
-           format file of the same kind is replaced, and removed if it
-           was under a different name (a pre-0.3 `book<suffix>`).
+           format of a book shares its folder's name. A book holds one
+           file per kind (spec GROUP-4, ADR-21): if the folder already
+           has a *different* file of this kind the import is refused
+           with `FormatConflictError` before anything is touched; the
+           same bytes again is a re-import and simply replaces the
+           file (also removing a pre-0.3 `book<suffix>` name).
         5. Record the evidence on the Book (spec GROUP-4):
            - New book (3c): `identified` is step 2's basis (or None),
              `grouped` stays None.
@@ -156,6 +167,9 @@ class Library:
             UnsupportedFormatError: If path's suffix has no registered
                 parser (e.g. .mobi -- not supported until a later
                 slice; see ROADMAP).
+            FormatConflictError: If the book this file belongs to
+                already holds a different file of the same format kind.
+                Nothing has been changed when this is raised.
             BadEpubError: Propagated unchanged if path is a .epub that
                 formats.epub.parse_epub cannot read (a `ParseError`).
             BadPdfError: Propagated unchanged if path is a .pdf that
@@ -179,6 +193,7 @@ class Library:
             book, join = match
             assert book.directory is not None  # every loaded Book carries it (ADR-11)
             directory = book.directory
+            _refuse_conflicting_format(book, path, kind, join, found, title=title)
 
         _place_format(book, directory, path, kind)
         cover_url = _apply_identification(book, found, join, title=title)
@@ -209,7 +224,9 @@ class Library:
             An ImportBatchResult (see its attributes). Files whose
             suffix has no parser land in `skipped` rather than being
             attempted; hidden files (a leading dot, e.g. .DS_Store) are
-            ignored entirely.
+            ignored entirely. A file refused for colliding with a book's
+            existing file of the same kind lands in `conflicts`, not
+            `failed`.
 
         Raises:
             FileNotFoundError: If `directory` does not exist.
@@ -233,6 +250,8 @@ class Library:
                 continue
             try:
                 result.imported.append((path, self.import_file(path)))
+            except FormatConflictError as conflict:
+                result.conflicts.append(conflict)
             except Exception as exc:
                 # One bad file must not abort the batch.
                 result.failed.append((path, exc))
@@ -547,7 +566,8 @@ class Library:
         except MetadataSourceError as exc:
             _log.warning(
                 "IDENT-6 cover download for %r failed, continuing without it: %s",
-                book.title, exc,
+                book.title,
+                exc,
             )
             return
         cover_path = directory / "cover.png"
@@ -583,6 +603,41 @@ def _rename_in_place(path: Path, new_stem: str) -> Path:
     if target != path:
         path.rename(target)
     return target
+
+
+def _refuse_conflicting_format(
+    book: Book,
+    source: Path,
+    kind: FormatKind,
+    join: MatchBasis,
+    found: Identification,
+    *,
+    title: str,
+) -> None:
+    """Raise `FormatConflictError` if `book` already holds a file of
+    `kind` that is not byte-for-byte `source`.
+
+    Spec: GROUP-4, first rule (ADR-21). A book holds one file per kind;
+    the same bytes again is F13's idempotent re-import and passes,
+    anything else is refused before the folder or catalog is touched.
+    The existing file is compared directly -- no stored hash is needed
+    to tell a re-import from a different file. A recorded file that has
+    gone missing from disk is not a conflict: there is nothing to lose.
+    """
+    for fmt in book.formats:
+        if fmt.kind != kind or not fmt.path.exists():
+            continue
+        if filecmp.cmp(source, fmt.path, shallow=False):
+            return
+        raise FormatConflictError(
+            source,
+            book,
+            fmt.path,
+            join,
+            title=title,
+            author=found.author,
+            isbn=found.isbn,
+        )
 
 
 def _place_format(book: Book, directory: Path, source: Path, kind: FormatKind) -> None:

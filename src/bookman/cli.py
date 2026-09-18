@@ -22,7 +22,12 @@ from bookman.config import (
     resolve_library,
     save_config,
 )
-from bookman.errors import CatalogError, LibraryNotConfiguredError, UnsupportedFormatError
+from bookman.errors import (
+    CatalogError,
+    FormatConflictError,
+    LibraryNotConfiguredError,
+    UnsupportedFormatError,
+)
 from bookman.formats import is_supported, supported_suffixes
 from bookman.library import _UNSET, ImportBatchResult, Library, _Unset
 from bookman.models import Book, MatchBasis
@@ -95,8 +100,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         Process exit code: 0 on full success. `import` returns 1 if
-        any file in the batch failed (partial success still imports
-        and reports the rest). `list`, `search`, `review`, `edit` and
+        any file in the batch failed or was refused as a conflict
+        (partial success still imports and reports the rest). `list`, `search`, `review`, `edit` and
         `reidentify` return 1 if the library root doesn't exist; the
         last three also return 1 if no book has the given name or id,
         and `edit` returns 1 for a blank title or an invalid ISBN.
@@ -382,8 +387,9 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
             directory; ignored for a single file.
 
     Returns:
-        0 if every file imported cleanly, 1 if any failed (including
-        a single-file import's own failure) or `path` doesn't exist.
+        0 if every file imported cleanly, 1 if any failed or was
+        refused as a same-kind conflict (including a single file's
+        own failure or refusal) or `path` doesn't exist.
     """
     if not path.exists():
         _error(f"no such file or directory: {path}")
@@ -402,18 +408,23 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
         for skipped_path in result.skipped:
             print(f"skipped: {skipped_path} (unsupported format {skipped_path.suffix})")
         sys.stdout.flush()
+        for conflict in result.conflicts:
+            print(_format_conflict(conflict), file=sys.stderr)
         for failed_path, exc in result.failed:
             print(f"failed: {failed_path}: {_describe(exc, failed_path)}", file=sys.stderr)
         sys.stderr.flush()
-        if not result.imported and not result.failed and not result.skipped:
+        if not any((result.imported, result.failed, result.skipped, result.conflicts)):
             hint = "" if recursive else "; try --recursive"
             print(f"no {_SUPPORTED} files found in {path}{hint}")
         _rule()
         print(_format_batch_result(result))
-        return 1 if result.failed else 0
+        return 1 if result.failed or result.conflicts else 0
 
     try:
         book = library.import_file(path)
+    except FormatConflictError as conflict:
+        print(_format_conflict(conflict), file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"failed: {path}: {_describe(exc, path)}", file=sys.stderr)
         return 1
@@ -715,13 +726,36 @@ def _review_reason(book: Book) -> str | None:
 def _format_batch_result(result: ImportBatchResult) -> str:
     """Render an ImportBatchResult's summary line, e.g. "3 imported, 1
     failed" -- printed after `_cmd_import`'s per-file lines for a directory
-    import. A skipped count is appended only when there is one, so the
-    common all-supported case stays short.
+    import. Skipped and refused counts are appended only when there are
+    any, so the common clean case stays short.
     """
     summary = f"{len(result.imported)} imported, {len(result.failed)} failed"
     if result.skipped:
         summary += f", {len(result.skipped)} skipped"
+    if result.conflicts:
+        summary += f", {len(result.conflicts)} not imported (already have that format)"
     return summary
+
+
+def _format_conflict(conflict: FormatConflictError) -> str:
+    """Render a refused same-kind import (ADR-21) as two lines: what was
+    refused and why, then what to do about it. The join basis is spelled
+    out because it is the real information -- an ISBN join means "same
+    book, which file do you want?", a title-only join means "was this
+    even the same book?" -- and the hint names the one resolution that
+    exists today, deleting the file in the folder and importing again.
+    """
+    kind = conflict.existing.suffix.lstrip(".")
+    reason = {
+        MatchBasis.ISBN: "same ISBN",
+        MatchBasis.TITLE_AUTHOR: "same title and author",
+        MatchBasis.TITLE_ONLY: "same title only -- check it is really the same book",
+    }[conflict.basis]
+    return (
+        f'not imported: {conflict.source}: "{conflict.book.title}" already has a '
+        f"different {kind} ({reason})\n"
+        f"  to replace it, delete {conflict.existing} and import again"
+    )
 
 
 if __name__ == "__main__":

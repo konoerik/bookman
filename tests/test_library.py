@@ -3,7 +3,7 @@ from helpers import VALID_ISBN13
 from helpers import make_epub as _make_epub
 from helpers import make_pdf as _make_pdf
 
-from bookman.errors import UnsupportedFormatError
+from bookman.errors import FormatConflictError, UnsupportedFormatError
 from bookman.identify.source import Candidate
 from bookman.library import Library, _sanitize_dirname
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis
@@ -64,8 +64,9 @@ def test_import_file_names_format_files_after_their_folder(tmp_path, library):
 def test_import_file_replaces_legacy_book_named_format_file(tmp_path, library):
     directory = library.root / "Deep Work"
     directory.mkdir()
+    epub = _make_epub(tmp_path / "new.epub", title="Deep Work", author="Cal Newport")
     legacy = directory / "book.epub"
-    legacy.write_bytes(b"old")
+    legacy.write_bytes(epub.read_bytes())  # the same file, under the pre-0.3 name
     save_metadata(
         Book(
             title="Deep Work",
@@ -76,7 +77,6 @@ def test_import_file_replaces_legacy_book_named_format_file(tmp_path, library):
         directory,
     )
 
-    epub = _make_epub(tmp_path / "new.epub", title="Deep Work", author="Cal Newport")
     book = library.import_file(epub)
 
     assert [fmt.path for fmt in book.formats] == [directory / "Deep Work.epub"]
@@ -349,15 +349,15 @@ def test_import_file_records_weakest_grouping_basis(tmp_path, library, source):
     source.record = None
     isbn_id = [f"urn:isbn:{VALID_ISBN13}"]
 
-    library.import_file(_make_epub(tmp_path / "a.epub", title="Sapiens", identifiers=isbn_id))
+    epub = _make_epub(tmp_path / "a.epub", title="Sapiens", identifiers=isbn_id)
+    library.import_file(epub)
     weak = library.import_file(_make_pdf(tmp_path / "b.pdf", title="Sapiens"))
     assert weak.grouped == MatchBasis.TITLE_ONLY
 
-    # A later strong join must not erase the record of the weak one.
-    (tmp_path / "b.pdf").unlink()
-    strong = library.import_file(
-        _make_pdf(tmp_path / "c.pdf", title="Sapiens", text=f"ISBN {VALID_ISBN13}")
-    )
+    # A later strong join must not erase the record of the weak one. With
+    # one file per kind (ADR-21) the strong join is a re-import of the
+    # ISBN-bearing EPUB, which joins by ISBN (GROUP-1).
+    strong = library.import_file(epub)
     assert strong.grouped == MatchBasis.TITLE_ONLY
     assert strong.needs_review
 
@@ -819,14 +819,17 @@ def test_import_file_isbn_join_beats_a_title_author_join_to_a_different_book(
     # F5: two shelved books -- one shares the file's (asserted) ISBN, the
     # other its title and author. GROUP-1 runs first, so the ISBN decides;
     # the author agreeing is what lets the ISBN survive the title mismatch.
+    # The ISBN book is shelved as a PDF so the incoming EPUB can join it:
+    # a book holds one file per kind (ADR-21).
     by_isbn = library.import_file(
-        _make_epub(
-            tmp_path / "by_isbn.epub",
+        _make_pdf(
+            tmp_path / "by_isbn.pdf",
             title="Deep Work",
             author="Cal Newport",
-            identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+            text=f"ISBN {VALID_ISBN13}",
         )
     )
+    assert by_isbn.isbn == VALID_ISBN13
     by_title = library.import_file(
         _make_epub(tmp_path / "by_title.epub", title="Digital Minimalism", author="Cal Newport")
     )
@@ -850,10 +853,12 @@ def test_import_file_isbn_join_beats_a_title_author_join_to_a_different_book(
 
 def test_import_file_reimport_of_the_same_file_is_idempotent(tmp_path, library):
     # F13: one format entry, the file replaced, nothing else disturbed.
+    # (The library's copy is not tampered with here: a copy whose bytes
+    # differ from the incoming file is, by ADR-21, a different file and
+    # is refused -- see test_import_file_refuses_a_different_file_of_the_same_kind.)
     epub = _make_epub(tmp_path / "book.epub", title="Deep Work", author="Cal Newport")
     first = library.import_file(epub)
     stored = first.formats[0].path
-    stored.write_bytes(b"stale")  # so we can see the copy actually happened
 
     again = library.import_file(epub)
 
@@ -873,7 +878,9 @@ def test_import_order_does_not_change_the_end_state(tmp_path, source):
         library = Library(tmp_path / order, source=source)
         epub = _make_epub(tmp_path / f"{order}.epub", title="Deep Work", author="Cal Newport")
         pdf = _make_pdf(
-            tmp_path / f"{order}.pdf", title="Deep Work", author="Cal Newport",
+            tmp_path / f"{order}.pdf",
+            title="Deep Work",
+            author="Cal Newport",
             text=f"ISBN {VALID_ISBN13}",
         )
         for path in (epub, pdf) if order == "epub_first" else (pdf, epub):
@@ -885,8 +892,150 @@ def test_import_order_does_not_change_the_end_state(tmp_path, source):
 
     def state(book: Book) -> tuple:
         return (
-            book.title, book.author, book.isbn, book.identified, book.grouped,
-            book.needs_review, sorted(fmt.kind for fmt in book.formats),
+            book.title,
+            book.author,
+            book.isbn,
+            book.identified,
+            book.grouped,
+            book.needs_review,
+            sorted(fmt.kind for fmt in book.formats),
         )
 
     assert state(a) == state(b)
+
+
+# --- F14: one file per format kind (spec GROUP-4, ADR-21) ----------------
+
+
+def test_import_file_refuses_a_different_file_of_the_same_kind(tmp_path, library):
+    first_src = _make_epub(tmp_path / "first.epub", title="Deep Work", author="Cal Newport")
+    first = library.import_file(first_src)
+    stored = first.formats[0].path
+    # A different EPUB of the same book: the same metadata, different bytes.
+    second_src = _make_epub(
+        tmp_path / "second.epub",
+        title="Deep Work",
+        author="Cal Newport",
+        identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+    )
+
+    with pytest.raises(FormatConflictError) as exc:
+        library.import_file(second_src)
+
+    conflict = exc.value
+    assert conflict.source == second_src
+    assert conflict.book.id == first.id
+    assert conflict.existing == stored
+    assert conflict.basis == MatchBasis.TITLE_AUTHOR
+    assert (conflict.title, conflict.author, conflict.isbn) == (
+        "Deep Work",
+        "Cal Newport",
+        VALID_ISBN13,
+    )
+    assert "already has a different epub" in str(conflict)
+    assert "title_author" in str(conflict)
+
+
+def test_a_refused_import_changes_nothing(tmp_path, library):
+    first = library.import_file(
+        _make_epub(tmp_path / "first.epub", title="Deep Work", author="Cal Newport")
+    )
+    stored = first.formats[0].path
+    before = stored.read_bytes()
+    listing = sorted(p.name for p in first.directory.iterdir())
+    metadata = (first.directory / "metadata.json").read_bytes()
+    second = _make_epub(
+        tmp_path / "second.epub",
+        title="Deep Work",
+        author="Cal Newport",
+        identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+    )
+
+    with pytest.raises(FormatConflictError):
+        library.import_file(second)
+
+    assert stored.read_bytes() == before
+    assert sorted(p.name for p in first.directory.iterdir()) == listing
+    assert (first.directory / "metadata.json").read_bytes() == metadata
+    (saved,) = library.scan()
+    assert saved.isbn is None  # the refused file's ISBN was not adopted
+    assert saved.grouped is None
+
+
+def test_conflict_reports_the_join_basis_for_a_doubtful_merge(tmp_path, library):
+    # The in-session F14 case: two unrelated "Dune"s that GROUP-2 joins by
+    # title alone. The basis tells the user the merge itself is doubtful.
+    library.import_file(_make_epub(tmp_path / "a.epub", title="Dune", author=None))
+
+    with pytest.raises(FormatConflictError) as exc:
+        library.import_file(_make_epub(tmp_path / "b.epub", title="Dune", author="Ada Lovelace"))
+
+    assert exc.value.basis == MatchBasis.TITLE_ONLY
+    assert len(library.scan()) == 1
+
+
+def test_a_different_kind_still_joins(tmp_path, library):
+    library.import_file(_make_epub(tmp_path / "a.epub", title="Deep Work", author="Cal Newport"))
+
+    book = library.import_file(
+        _make_pdf(tmp_path / "a.pdf", title="Deep Work", author="Cal Newport")
+    )
+
+    assert sorted(fmt.kind for fmt in book.formats) == [FormatKind.EPUB, FormatKind.PDF]
+
+
+def test_the_same_file_under_another_name_is_a_reimport_not_a_conflict(tmp_path, library):
+    src = _make_epub(tmp_path / "a.epub", title="Deep Work", author="Cal Newport")
+    first = library.import_file(src)
+    copy = tmp_path / "elsewhere" / "deep-work-copy.epub"
+    copy.parent.mkdir()
+    copy.write_bytes(src.read_bytes())
+
+    again = library.import_file(copy)
+
+    assert again.id == first.id
+    assert len(again.formats) == 1
+    assert len(library.scan()) == 1
+
+
+def test_a_recorded_file_missing_from_disk_is_not_a_conflict(tmp_path, library):
+    first = library.import_file(
+        _make_epub(tmp_path / "first.epub", title="Deep Work", author="Cal Newport")
+    )
+    first.formats[0].path.unlink()  # the user deleted it by hand to make room
+
+    book = library.import_file(
+        _make_epub(
+            tmp_path / "second.epub",
+            title="Deep Work",
+            author="Cal Newport",
+            identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+        )
+    )
+
+    assert book.id == first.id
+    assert book.formats[0].path.exists()
+    assert book.isbn == VALID_ISBN13
+
+
+def test_import_directory_collects_conflicts_apart_from_failures(tmp_path, library):
+    library.import_file(
+        _make_epub(tmp_path / "shelved.epub", title="Deep Work", author="Cal Newport")
+    )
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    _make_epub(
+        bundle / "deep-work.epub",
+        title="Deep Work",
+        author="Cal Newport",
+        identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+    )
+    _make_epub(bundle / "other.epub", title="Sapiens", author="Yuval Noah Harari")
+    (bundle / "bad.epub").write_bytes(b"not a zip")
+
+    result = library.import_directory(bundle)
+
+    assert [book.title for _, book in result.imported] == ["Sapiens"]
+    assert [path.name for path, _ in result.failed] == ["bad.epub"]
+    assert [c.source.name for c in result.conflicts] == ["deep-work.epub"]
+    assert result.conflicts[0].book.title == "Deep Work"

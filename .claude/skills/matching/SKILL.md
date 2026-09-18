@@ -48,13 +48,14 @@ does instead, and let the user decide which one is wrong. If they decide
 the spec was wrong, the fix is an ADR plus a spec edit — not a silent
 rewrite.
 
-## Three things the spec deliberately leaves open
+## Two things the spec deliberately leaves open
 
-`open_questions` at the end of the YAML block records these — OQ1 (two
-files of the same format kind), OQ2 (scraped-ISBN provenance isn't
-persisted), OQ3 (is an edition a different book). Don't invent behavior
-for them; if the work needs an answer, that is a decision to make and
-log, not to infer.
+`open_questions` at the end of the YAML block records these — OQ2
+(scraped-ISBN provenance isn't persisted), OQ3 (is an edition a different
+book). Don't invent behavior for them; if the work needs an answer, that
+is a decision to make and log, not to infer. `decided_questions` above it
+keeps the ones that have been answered (OQ1, same-kind files: refused)
+with the reasoning, so the question isn't reopened by accident.
 
 MATCH-0 also carries an `unspecified:` list — title shapes this spec
 knowingly doesn't handle. They are gaps by choice, not oversights.

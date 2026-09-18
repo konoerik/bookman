@@ -77,9 +77,13 @@ flowchart TD
     GROUP2 -->|title_only| JOINTO["grouped = title_only"]
     GROUP2 -->|"no match"| NEW["GROUP-3<br/>New book, new folder"]
 
-    JOINISBN --> MERGE["GROUP-4<br/>Merge into the existing book"]
-    JOINTA --> MERGE
-    JOINTO --> MERGE
+    JOINISBN --> SAMEKIND
+    JOINTA --> SAMEKIND
+    JOINTO --> SAMEKIND
+
+    SAMEKIND{"GROUP-4<br/>Does the book already have<br/>a different file of this kind?"}
+    SAMEKIND -->|"yes"| REFUSE["Refuse the file<br/>nothing changes; report the conflict<br/>and the evidence behind the join"]
+    SAMEKIND -->|"no, or the same bytes"| MERGE["GROUP-4<br/>Merge into the existing book"]
 
     MERGE --> PLACE["PLACE"]
     NEW --> PLACE
@@ -167,7 +171,7 @@ Step IDs are stable — cite them from FEATURES rows, ADRs and commit
 messages.
 
 ```yaml
-spec_version: 1
+spec_version: 2
 updated: 2026-09-18
 scope: identify + group, and the match rule they share
 derived_from:
@@ -178,6 +182,7 @@ derived_from:
   - ADR-10                   # the file's own title wins over the source's
   - ADR-13                   # lookups go through a MetadataSource, not a named provider
   - ADR-14                   # ISBN provenance: scraped vs asserted
+  - ADR-21                   # one file per format kind; a conflicting file is refused, never overwritten
   - ADR-15                   # junk titles in two tiers
   - ADR-19                   # title disagreement vetoes an asserted ISBN unless the author vouches
 # FEATURES rows named in `sources:` below are illustrative scenarios,
@@ -495,6 +500,19 @@ steps:
     does: Merge a file into the book it joined.
     rules:
       - >
+        A book holds at most one file per format kind. A file whose kind
+        the book already has is **refused** unless it is byte-for-byte the
+        file already there (which is a re-import, below). Refusing changes
+        nothing — not the folder, not the catalog, not the book's evidence
+        — and reports the conflict with what a person needs to resolve it:
+        the book that was joined, the file it already holds, the basis of
+        the join (an ISBN join says "same book, which file?"; a title-only
+        join says "was this even the same book?"), and what the incoming
+        file resolved to. The resolution itself — replace the file, or
+        import it as a separate book — is the user's decision and is not
+        specified here; nothing is ever overwritten to save them making it.
+        sources: ADR-21, FEATURES F14
+      - >
         grouped records the *weakest* join ever used, not the latest. A
         doubtful join stays visible even after a later confident one.
         sources: FEATURES F10
@@ -522,8 +540,10 @@ steps:
         sources: ADR-9, FEATURES F12
       - >
         Re-importing the same file is idempotent: one format entry, the
-        file replaced.
-        sources: FEATURES F13
+        file replaced. "The same file" means the same bytes, judged
+        against the file already in the folder — no stored provenance is
+        needed to tell it from a different file of the same kind.
+        sources: FEATURES F13, ADR-21
       - >
         Import order must not change the end state: the same set of files
         in any order yields the same book.
@@ -538,18 +558,25 @@ review_queue:
     opinion, so a frontend can always say *why*.
   sources: [ADR-4, ADR-9, "FEATURES A3", "FEATURES A8", "FEATURES C16", "FEATURES E4", "FEATURES F4"]
 
-open_questions:
+decided_questions:
   - id: OQ1
     ref: FEATURES F14
     question: >
       Two different files of the same format kind for the same book — two
       EPUB editions. Reject the second, keep both as versions, or accept
       and report it?
-    blocked_on: >
-      Needs per-file provenance (a hash) to tell "the same file again"
-      from "a different file of the same kind" — FEATURES I11 and L6.
-    status: undecided; no behavior is specified here until it is.
+    decided: 2026-09-18, ADR-21 — reject, and report why (GROUP-4, first rule).
+    note: >
+      Was thought blocked on stored per-file provenance (I11). It is not:
+      the existing file is in the folder, so "same bytes or not" is
+      answered by comparing against it. Keeping both as versions was
+      rejected because it breaks one-file-per-kind (the model, the folder
+      layout and the TUI all assume it) and leaves a wrong merge holding
+      two files; accept-and-report because the first file is still gone.
+      Deliberate replacement and "import as a separate book" are the
+      follow-ups, FEATURES K11/K12.
 
+open_questions:
   - id: OQ2
     ref: FEATURES B7 + I12
     question: >

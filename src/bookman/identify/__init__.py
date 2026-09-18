@@ -14,7 +14,7 @@ recorded in `docs/FEATURES.md` Part I, not silently reconciled.
 
 from __future__ import annotations
 
-SPEC_VERSION = 1
+SPEC_VERSION = 2
 """The `spec_version` of `docs/IDENTIFICATION.md` that this package implements.
 
 Bumped only when the *intended* behavior changes -- a step added, removed or

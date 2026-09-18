@@ -30,12 +30,12 @@ not that is post-1.0, however cheap it looks.
 
 | Area | Rows | Why it's in |
 |---|---|---|
-| Silent-merge and mislabel gaps | F14 (needs OQ1), ~~A10~~, ~~D9~~ | These lose data quietly. The top of the gap summary below. A10 and D9 closed 2026-09-18 |
+| ~~Silent-merge and mislabel gaps~~ | ~~F14, A10, D9~~ | ✅ All closed 2026-09-18 — F14 by ADR-21 (refuse, never overwrite). Nothing on the import path loses data quietly any more |
 | ~~The core promise, pinned~~ | ~~F13, F16, A4, A8, F5~~ | ✅ Done 2026-09-18 — all five pinned in `test_library`; the code was as believed |
 | ~~Book identity~~ | ~~I5~~ | ✅ Done 2026-09-18 (ADR-17). Everything in K keys off it |
 | ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18), CLI commands the same day (ADR-20) |
 | Single-writer assumption | M6 | Documentation only; the honest statement of a real limitation |
-| Open decisions | OQ1 (F14), OQ3 (C7) | Both block behavior that is in scope |
+| Open decisions | OQ3 (C7) | Blocks behavior that is in scope. (OQ1 decided 2026-09-18, ADR-21) |
 
 **Out of scope for v1.0** — everything else in Parts I and II. The
 notable ones, so they aren't mistaken for oversights: richer catalog
@@ -225,8 +225,8 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | F10 | GROUP-4 | Weakest grouping basis remembered across joins | `grouped` never strengthens | ✅ | `test_library::records_weakest_grouping_basis` |
 | F11 | GROUP-4 | Reviewed book, new format | Metadata untouched | ✅ | `test_library::does_not_overwrite_reviewed_book_metadata` |
 | F12 | GROUP-4 | Reviewed book, `title_only` join | `reviewed` cleared | ✅ | `test_library::clears_reviewed_on_title_only_join` |
-| F13 | GROUP-4 | Re-import of the same file (same format kind) | Idempotent: one format entry, file replaced | ✅ | `test_library::reimport_of_the_same_file_is_idempotent` (same `Book.id`, one entry, bytes replaced, one book in the library); legacy rename in `replaces_legacy_book_named_format_file` |
-| F14 | GROUP-4 (OQ1) | Same format kind, different file, same book (two EPUB editions) | Undecided | ❌ | Second silently **overwrites** the first's `.epub`; there is no "already have this format" signal in `Book` or `ImportBatchResult` |
+| F13 | GROUP-4 | Re-import of the same file (same format kind) | Idempotent: one format entry, file replaced | ✅ | `test_library::reimport_of_the_same_file_is_idempotent` (same `Book.id`, one entry, one book in the library), `the_same_file_under_another_name_is_a_reimport_not_a_conflict`; legacy rename in `replaces_legacy_book_named_format_file`. "Same file" is judged by bytes against the folder's copy (ADR-21), so a library copy that was modified on disk counts as a different file and hits F14 |
+| F14 | GROUP-4 | Same format kind, different file, same book (two EPUB editions) | Refused; nothing changes; the conflict is reported with the join basis | ✅ | ADR-21. `import_file` raises `FormatConflictError` (book, existing file, basis, incoming title/author/isbn); `import_directory` collects them in `ImportBatchResult.conflicts`, apart from `failed`. `test_library::refuses_a_different_file_of_the_same_kind`, `a_refused_import_changes_nothing`, `conflict_reports_the_join_basis_for_a_doubtful_merge`, `a_recorded_file_missing_from_disk_is_not_a_conflict`, `import_directory_collects_conflicts_apart_from_failures`; CLI in `test_cli`. Resolving the conflict is K11/K12 |
 | F15 | MATCH-2 | Multi-volume set (C17) | Separate books | ✅ | `test_library::keeps_volumes_of_a_set_as_separate_books` |
 | F16 | GROUP-4 | Order independence: `{epub without ISBN, pdf with ISBN}` imported in either order | Same end state | ✅ | `test_library::import_order_does_not_change_the_end_state` — title, author, ISBN, `identified`, `grouped`, `needs_review` and format set all equal |
 
@@ -283,8 +283,10 @@ leave a book unidentified, because the latter are already surfaced by
    grouping can't apply the stricter rule.
 3. ~~**B10 — scraped ISBN groups without a cross-check.**~~ Closed:
    `_find_book`'s ISBN branch runs `match_basis(..., same_isbn=True)`.
-4. **F14 — same-kind format silently overwritten.** Needs a decision
-   (reject? version? report?) before code.
+4. ~~**F14 — same-kind format silently overwritten.**~~ Closed
+   2026-09-18 (ADR-21): refused with the evidence, never overwritten.
+   The blocker was imaginary — the folder's own copy is what a byte
+   comparison needs, not a stored hash.
 5. ~~**A12 — junk titles `title_only`-match each other.**~~ Closed in
    two tiers: a placeholder title ("Untitled") normalizes to "" and so
    counts as no title, while a merely generic one ("Book") is barred
@@ -371,11 +373,13 @@ built yet: the review flag exists, the way to act on it doesn't.
 | K3 | Re-identify: retry the lookup for one book | After fixing a title, or when OL improves | ✅ | `Library.reidentify(book)` (ADR-18). Always runs; a reviewed book keeps its human-set fields and gains only a missing cover and empty fields — the E12 route. Never renames, since the book's own title always wins (ADR-10). `bookman reidentify BOOK` |
 | K4 | Supply / replace / remove a cover (file or URL) | Only route to a cover for E12 cases | ❌ | Backlog; needs I3 to accept a user-supplied image |
 | K5 | Choose among lookup candidates | "Which of these is it?" in the TUI, instead of auto-pick | ❌ 💬 | `identify` returns one answer; a `candidates(parsed) -> list[…]` API plus `apply(book, candidate)` would let a frontend disambiguate B6/C7/D6-style cases. Changes the ADR-4 stance from "auto with flag" to "auto with flag, override available" |
-| K6 | Merge two books | Undo a false split (C10, D11) | ❌ | Formats move to one folder; conflicting same-kind formats hit F14 |
+| K6 | Merge two books | Undo a false split (C10, D11) | ❌ | Formats move to one folder; conflicting same-kind formats must be refused or chosen, as F14 is on import |
 | K7 | Split a format out into its own book | Undo a false merge (C16, C17, B10) | ❌ | Inverse of K6 |
 | K8 | Remove a format from a book | Bad file | ❌ | |
 | K9 | Delete a book | Housekeeping | ❌ | Folder removal + index; decide whether source files (never moved, G10) are touched — they shouldn't be |
 | K10 | Undo / history of curation | Safety net for K2–K9 | ❌ 💬 | Probably out of scope for a personal tool; note the decision either way |
+| K11 | Replace a book's file for one kind deliberately | Resolve an F14 refusal when the new file is the one wanted (a fixed re-download, a better edition) | ❌ | Deferred from ADR-21 by choice. Shape: `import_file(path, replace=True)` or `Library.replace_format(book, path)`. Until then: delete the file in the folder and import again, which the CLI hint says |
+| K12 | Import a file as a new book, bypassing grouping | Resolve an F14 refusal when the merge was wrong (two unrelated "Dune"s) | ❌ | Deferred from ADR-21. The K7 split family; needs OQ3 thinking, since "different edition" and "different book" would both use it |
 
 ## L. Import operations
 
@@ -386,7 +390,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | L3 | Progress callback / streaming results | TUI progress bar on a 40-book bundle with network per book | ❌ | `import_directory` returns only when done |
 | L4 | Cancel an in-progress batch | TUI responsiveness | ❌ | Follows from L3's shape (generator or callback) |
 | L5 | Dry run / preview: "here is what would happen" | Confidence before touching the library | ❌ | Needs identify + `_find_book` without the copy/save step |
-| L6 | Duplicate / already-imported detection | Re-running a bundle import shouldn't re-copy or clobber | 🔶 | Same-kind format is silently overwritten (F14); no hash (I11) |
+| L6 | Duplicate / already-imported detection | Re-running a bundle import shouldn't re-copy or clobber | 🔶 | Never clobbers now (F14, ADR-21): the same bytes re-import idempotently, a changed file is refused and reported. Still re-copies identical bytes and still runs the lookup for each; a hash (I11) would make both skippable |
 | L7 | Copy vs. move source files | Users who want the bundle folder gone | 🔶 💬 | Copy only (G10); a `move=` flag is cheap but changes the safety story |
 | L8 | Adopt files dropped into the library folder by hand | Users who manage some folders manually | ❌ | `scan()` skips folders without metadata.json |
 | L9 | Offline mode / no-network import | Airplane, rate limits, privacy | ❌ | Lookups run unconditionally; failures degrade gracefully (E9) but each costs a timeout |
@@ -429,7 +433,7 @@ matching heuristics:
   than any threshold, once the evidence is *shown*. (C17 turned out to
   be a clean rule — number tokens — and closed on the Part I side.)
 - **E12** (no cover on Open Library) — only K4 or N8 fixes it.
-- **F14** (same-kind overwrite) — is really I11 + L6.
+- ~~**F14** (same-kind overwrite)~~ — closed without I11 (ADR-21); the *resolution* is K11/K12.
 - **A14, D11** (multiple / non-Latin authors) — start with I14.
 
 The first Part II slice that unblocks the TUI — **I5** (stable id),
