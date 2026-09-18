@@ -3,6 +3,10 @@ with an ISBN) refer to the same book. Used in two places: to accept or
 reject an Open Library candidate for a file (identify/resolve.py), and to
 decide whether a file belongs in an existing library folder (library.py).
 Stdlib only.
+
+This module is the MATCH rule of `docs/IDENTIFICATION.md` (steps MATCH-0..3)
+-- the one place both questions are decided, so they cannot drift apart
+(spec PR2). Each function names the step it implements.
 """
 
 from __future__ import annotations
@@ -50,6 +54,8 @@ _CONVERTER_TITLE = re.compile(
 
 def normalize_title(title: str) -> str:
     """Reduce a title to the form used for comparison.
+
+    Spec: MATCH-0.
 
     NFKC-normalizes and casefolds, drops any subtitle (everything after
     the first `:`, `;`, ` - `, or an em/en dash), drops trailing
@@ -106,6 +112,10 @@ def is_generic_title(normalized_title: str) -> bool:
     """Whether a *normalized* title is built only from generic words
     ("book", "final draft", "new document 2").
 
+    Spec: MATCH-3's "does the title actually distinguish this book?"
+    guard. Also consulted by MATCH-1, where a generic title is too weak
+    to contradict a shared ISBN.
+
     Such a title is too weak to establish a match on its own -- two
     unrelated files called "Book" are not one book -- but it is not
     nothing: an agreeing author can still corroborate it, which is what
@@ -124,12 +134,17 @@ def _meaningful_words(normalized_title: str) -> list[str]:
 def is_usable_title(title: str) -> bool:
     """Whether a title is worth searching on, i.e. whether anything
     survives `normalize_title`. A generic title counts: searching it
-    together with an author is how such a book gets identified."""
+    together with an author is how such a book gets identified.
+
+    Spec: IDENT-4.
+    """
     return bool(normalize_title(title))
 
 
 def author_surnames(author: str) -> set[str]:
     """Extract a comparable surname from each author in an author string.
+
+    Spec: MATCH-2's name rules.
 
     Splits multiple authors on `;`, `&`, or ` and `. A comma is
     ambiguous: "Newport, Cal" is one person written Last, First, while
@@ -174,6 +189,9 @@ def _split_on_commas(text: str) -> list[str]:
 def authors_agree(a: str | None, b: str | None) -> bool | None:
     """Whether two author strings name at least one person in common.
 
+    Spec: MATCH-2's author evidence -- True agrees, False is the rule's
+    strongest veto, None means neither side offered evidence.
+
     Args:
         a: An author string, or None if unknown.
         b: An author string, or None if unknown.
@@ -194,6 +212,9 @@ def authors_agree(a: str | None, b: str | None) -> bool | None:
 def titles_agree(a: str, b: str) -> bool:
     """Whether two titles are the same after normalization, allowing a
     small amount of fuzz (difflib ratio >= 0.9 on the normalized forms).
+
+    Spec: MATCH-2's title test. The strict, fuzz-free comparison MATCH-3
+    requires is done in `match_basis` directly, not here.
 
     The fuzz never bridges a difference in numbers: "... Volume 1" and
     "... Volume 2" (or "Part II"/"Part III") are different books however
@@ -236,6 +257,10 @@ def match_basis(
 ) -> MatchBasis | None:
     """Judge whether a file's own metadata and a candidate description
     (an Open Library record, or an existing library book) are the same book.
+
+    Spec: MATCH-1, MATCH-2, MATCH-3 (MATCH-0 runs first, via
+    `normalize_title`). This is the single rule both identification and
+    grouping call, so the two can never drift apart (spec PR2).
 
     Rules, in order:
     - `same_isbn`: ISBN, unless title and author are both present on

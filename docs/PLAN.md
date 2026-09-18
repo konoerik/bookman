@@ -4,11 +4,31 @@
 <!-- Current sprint items. Keep this short — 5-10 items max.
      If it grows beyond that, move lower-priority items to Backlog. -->
 
+Remaining v1.0 work (FEATURES *v1.0 scope*), in harm order:
+
+1. **A10** — IDENT-1 says try each ISBN until one is accepted;
+   `resolve.identify` tries only `isbns[0]`. The one open divergence
+   between the spec and the code.
+2. **D9** — "Martin Luther King Jr." yields surname `{'jr'}`.
+3. **F14** — blocked on OQ1.
+4. The five ❓ rows that pin the core promise: **A4, A8** (filename-stem
+   fallback), **F5** (ISBN beats a title match), **F13** (re-import is
+   idempotent), **F16** (order independence). Cheap tests, and F16
+   matters more if format-priority import ordering is ever tried.
+5. **CLI commands for K1–K3** — N7 dropped to 🔶 when the operations
+   landed without them.
+
+Decisions needed (they block behavior, not the list above):
+- **OQ3 / C7** — is a different edition a different book?
+- **OQ1 / F14** — two files of the same format kind for one book.
+- Volumes: C17 keeps them apart. Should they also be *related* (I6
+  series/volume), or is "separate and unmerged" the v1.0 answer?
+
 ## Backlog
 <!-- Accepted but not yet active. Load this section only when planning or prioritizing. -->
 - Matching follow-ups (from the live Gutenberg smoke run after ADR-9): author agreement is surname-only, so "Frank Herbert" vs "Brian Herbert" count as the same author (pinned in `test_match.py` as a known limitation); a title whose subtitle follows a period ("A CHRISTMAS CAROL IN PROSE. Being a Ghost Story...") isn't split, since ". " also appears inside titles ("Mr. Darcy..."); Open Library title search is sent the raw file title, so a long Gutenberg-style title only surfaces the cover-less Gutenberg-derived records — acceptable, but a second search on the normalized short title could find a cover.
 - TUI/CLI needs a way to *set* `Book.reviewed` (and correct title/author) — the library has the field and honors it on import, but nothing writes it yet besides `save_metadata` directly.
-- MOBI parser (`formats/mobi.py`): one module exposing a `FormatParser` plus a `register(".mobi", FormatKind.MOBI, parse_mobi)` in `formats/__init__.py` (R7 made this a drop-in). Two sample files still skipped.
+- MOBI parser (`formats/mobi.py`): one module exposing a `FormatParser` plus a `register(".mobi", FormatKind.MOBI, parse_mobi)` in `formats/__init__.py` (R7 made this a drop-in). Two sample files still skipped — and staying skipped: deprioritized below v1.0 on 2026-09-18 (legacy Amazon format, most expensive parser under ADR-3; see ADR-2 Amendment and FEATURES L11).
 - Feature map follow-ups (docs/FEATURES.md, 2026-09-15): remaining Part I gaps from its "Gap summary" — F14 same-kind format silently overwritten (needs a decision: reject / version / report — really I11 + L6), A10 only first ISBN tried, D9 "Jr." surnames. (C17, B6, B10 closed 2026-09-16; A12 junk titles and L2/L10 exports closed 2026-09-17.) Part II first slice: I5 stable id (R2), K1 set reviewed, K2 edit fields.
 - Release hygiene leftovers: import copies the file before loading metadata (orphan on failed save); document single-writer assumption / lock file. (README, CHANGELOG, CI, LICENSE done 2026-09-16.)
 - Known accepted risk: EPUB parsing uses stdlib `xml.etree.ElementTree` with no entity-expansion guard (billion-laughs). Fixing needs a new dependency (`defusedxml`), which conflicts with the pypdf-only dependency policy (ADR-3) — deliberately not fixed for now.
@@ -18,6 +38,12 @@
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- Settled the identification-spec review by keeping both documents and inverting their relationship (ADR-16): `docs/IDENTIFICATION.md` is the source of truth, derived from the ADRs alone; `docs/FEATURES.md` Part I is the conformance report against it, with a `Step` column on all 86 Part I rows. Bound to the code by `bookman.identify.SPEC_VERSION`, a `Spec:` line on every implementing function, step IDs in the log lines, and `tests/test_spec_conformance.py` — which enforces the step trace and executes the spec's new 20-row decision table against `match_basis`.
+- Drew the v1.0 line in FEATURES, wrote the format boundary down (H13, ROADMAP *Out of Scope*), and moved C7 (are editions different books) out of the spec's normative text into `open_questions` as OQ3, since FEATURES marked it unconfirmed.
+- Deprioritized MOBI below v1.0 (ADR-2 Amendment): a legacy Amazon format, the most expensive parser under ADR-3, and unparsed files already degrade gracefully (H6). ROADMAP Phase 2 became curation and MOBI became Phase 4; the PyPI description that claimed MOBI support was corrected.
+- Ran the first conformance audit: all 14 steps claimed by code and pinned by a ✅ row, and **no unregistered divergence** — A10, D6 and the B6 residual all already had rows. Confirmed two assumptions (GROUP-2's tie-break is deterministic; IDENT-5 prefers a stronger basis over a cover).
+- I5 stable book identity (ADR-17): `Book.id`, a uuid4 hex minted at construction and stored in metadata.json schema v3, surviving the folder rename K2 performs. A pre-v3 book gets a deterministic folder-derived id rather than a fresh one per read, so identity is stable before the first save. `Book.directory` stays, demoted to where-it-lives and display name.
+- K1–K3 curation (ADR-18): `Library.mark_reviewed`, `Library.edit`, `Library.reidentify`. Settled K2's open question — an edit **sets `reviewed`**, because `_apply_identification` would otherwise silently overwrite the correction on the next format import. A title edit renames inner files → metadata → folder, so an interruption leaves a loadable book under a stale name (verified in-session). `reidentify` always runs; on a reviewed book it fills only a missing cover and empty fields, the E12 route.
 - Initialized git repo and applied claudify python-lib blueprint
 - Brainstormed architecture: flat title-named managed library, EPUB+PDF-first format scope, pypdf-only dependency policy, auto-lookup-with-review identify workflow (ADR-1..4)
 - Scaffolded project with `uv init --lib`; added `pypdf` runtime dep, pytest/ruff/mypy dev deps

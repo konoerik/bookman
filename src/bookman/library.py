@@ -11,8 +11,10 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bookman.errors import MetadataSourceError
+from bookman.errors import CatalogError, MetadataSourceError
 from bookman.formats import is_supported, parser_for
+from bookman.formats.base import ParsedMetadata
+from bookman.identify.isbn import is_valid_isbn, normalize_isbn
 from bookman.identify.match import match_basis
 from bookman.identify.openlibrary import OpenLibrarySource
 from bookman.identify.resolve import Identification, identify
@@ -25,6 +27,7 @@ from bookman.models import (
     stronger_basis,
     weaker_basis,
 )
+from bookman.storage.catalog import save_metadata
 from bookman.storage.store import Catalog
 
 # A colon is the usual title/subtitle separator, so it becomes " -"
@@ -34,6 +37,17 @@ _DIRNAME_COLON = re.compile(r"\s*:")
 _UNSAFE_DIRNAME_CHARS = re.compile(r'[\\/*?"<>|]')
 _MAX_DIRNAME_LENGTH = 150
 _log = logging.getLogger("bookman.library")
+
+
+class _Unset:
+    """Sentinel for an argument that was not passed, as distinct from an
+    argument explicitly passed as None (which *clears* a field)."""
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+
+_UNSET = _Unset()
 
 @dataclass
 class ImportBatchResult:
@@ -80,6 +94,7 @@ class Library:
            (bookman.formats: .epub -> parse_epub, .pdf -> parse_pdf).
         2. Identify it (identify.resolve.identify): look up the file's
            ISBN, or search the metadata source by the file's title/author,
+           per `docs/IDENTIFICATION.md` steps IDENT-1..6,
            and accept a record only if it agrees with what the file
            says about itself (identify.match.match_basis). An
            accepted record supplies the author and a cover URL, while
@@ -88,7 +103,7 @@ class Library:
            ISBN is discarded. Otherwise the file's own title/author
            stand, with `identified=None`.
         3. Decide which book folder this file belongs to
-           (`_find_book`):
+           (`_find_book`; spec GROUP-1..3):
            a. An existing book with the same ISBN: that folder
               (basis ISBN).
            b. Otherwise an existing book whose title and author agree
@@ -106,7 +121,7 @@ class Library:
            format of a book shares its folder's name. An existing
            format file of the same kind is replaced, and removed if it
            was under a different name (a pre-0.3 `book<suffix>`).
-        5. Record the evidence on the Book:
+        5. Record the evidence on the Book (spec GROUP-4):
            - New book (3c): `identified` is step 2's basis (or None),
              `grouped` stays None.
            - Existing book (3a/3b): `grouped` becomes the weaker of
@@ -264,11 +279,206 @@ class Library:
         """
         return self._catalog.search(query)
 
+    def mark_reviewed(self, book: Book, reviewed: bool = True) -> Book:
+        """Record that a human has (or has not) checked this book.
+
+        A reviewed book is excluded from the review queue
+        (`Book.needs_review`) and its title/author/isbn/cover survive
+        any later import (ADR-4, ADR-9). Clearing the flag puts it back
+        in the queue without changing anything else.
+
+        Args:
+            book: A persisted book, as returned by `scan`, `search` or
+                `import_file`.
+            reviewed: True to mark it checked, False to un-mark it.
+
+        Returns:
+            The same Book, updated and saved.
+
+        Raises:
+            CatalogError: If `book` has never been persisted.
+            OSError: If the write fails.
+        """
+        directory = _persisted_directory(book)
+        book.reviewed = reviewed
+        self._persist(book, directory)
+        _log.info("marked %r reviewed=%s", book.title, reviewed)
+        return book
+
+    def edit(
+        self,
+        book: Book,
+        *,
+        title: str | _Unset = _UNSET,
+        author: str | None | _Unset = _UNSET,
+        isbn: str | None | _Unset = _UNSET,
+    ) -> Book:
+        """Correct a book's metadata by hand.
+
+        Omit an argument to leave that field alone; pass None to
+        `author` or `isbn` to clear it (a PDF whose `/Author` is
+        "Adobe InDesign" is worth erasing, not keeping). `title` cannot
+        be cleared -- every book has one.
+
+        Editing **sets `reviewed`**. This is not a convenience: an
+        un-reviewed edit would be silently overwritten the next time a
+        format of the same book is imported and identified more
+        strongly, so an edit that did not set the flag would not be
+        durable (ADR-18). Call `mark_reviewed(book, False)` afterwards
+        to put it back in the queue.
+
+        Changing the title renames the book's folder and every format
+        file inside it, since both are named after the title (ADR-1,
+        ADR-10). If the new name is taken by an unrelated book, a
+        numeric suffix is appended, exactly as on import.
+
+        Args:
+            book: A persisted book, as returned by `scan`, `search` or
+                `import_file`. Mutated in place.
+            title: A new title. Must contain something.
+            author: A new author string, or None to clear it.
+            isbn: A new ISBN-10 or ISBN-13 in any punctuation, stored
+                normalized to ISBN-13, or None to clear it.
+
+        Returns:
+            The same Book, updated and saved, with `directory`,
+            `formats` and `cover_path` repointed if it moved.
+
+        Raises:
+            CatalogError: If `book` has never been persisted, `title`
+                is empty or blank, or `isbn` is not a valid ISBN.
+            OSError: If the rename or the write fails.
+        """
+        directory = _persisted_directory(book)
+
+        if not isinstance(isbn, _Unset) and isbn is not None:
+            if not is_valid_isbn(isbn):
+                raise CatalogError(f"not a valid ISBN: {isbn!r}")
+            isbn = normalize_isbn(isbn)
+        if not isinstance(title, _Unset) and not title.strip():
+            raise CatalogError("a book's title cannot be blank")
+
+        if not isinstance(author, _Unset):
+            book.author = author
+        if not isinstance(isbn, _Unset):
+            book.isbn = isbn
+        book.reviewed = True
+
+        renamed = not isinstance(title, _Unset) and title != book.title
+        if not isinstance(title, _Unset):
+            book.title = title
+        if not renamed:
+            self._persist(book, directory)
+            return book
+
+        if _folder_already_named(directory.name, _sanitize_dirname(book.title)):
+            self._persist(book, directory)
+            return book
+
+        old_name = directory.name
+        self._rename_folder(book, directory)
+        self._catalog.relocate(old_name, book)
+        _log.info("renamed %r -> %r", old_name, book.directory.name if book.directory else None)
+        return book
+
+    def reidentify(self, book: Book) -> Book:
+        """Look this book up again and apply what comes back.
+
+        For a book whose lookup failed, that never matched, or whose
+        title a human has since corrected -- the usual route to a cover
+        the original import could not find.
+
+        A **reviewed** book is not overwritten: the lookup still runs,
+        but only a cover it lacks and fields left empty are filled in,
+        never the title, author or ISBN a human set. An unreviewed book
+        adopts the result outright, exactly as an import would.
+
+        The title is never changed: the book's own title is what is
+        searched on, and the file's title wins over the source's
+        (ADR-10). A rename is therefore never needed here.
+
+        Args:
+            book: A persisted book, as returned by `scan`, `search` or
+                `import_file`. Mutated in place.
+
+        Returns:
+            The same Book, updated and saved. Unchanged if nothing
+            agreed, or if the lookup failed (never raises for that).
+
+        Raises:
+            CatalogError: If `book` has never been persisted.
+            OSError: If the write fails.
+        """
+        directory = _persisted_directory(book)
+        found = identify(
+            ParsedMetadata(
+                title=book.title,
+                author=book.author,
+                isbns=[book.isbn] if book.isbn else [],
+            ),
+            self._source,
+        )
+
+        if book.reviewed:
+            # A human's fields stand; fill only what is missing.
+            book.author = book.author or found.author
+            book.isbn = book.isbn or found.isbn
+            adopt_cover = found.cover_url is not None and book.cover_path is None
+        else:
+            book.author = found.author or book.author
+            book.isbn = found.isbn or book.isbn
+            book.identified = found.basis
+            adopt_cover = found.cover_url is not None
+
+        if adopt_cover and found.cover_url:
+            self._save_cover(book, directory, found.cover_url)
+        self._persist(book, directory)
+        _log.info("re-identified %r as %s", book.title, found.basis)
+        return book
+
+    def _rename_folder(self, book: Book, directory: Path) -> None:
+        """Move `book` into a folder named after its (new) title, taking
+        its format files and cover with it.
+
+        Ordered so the dangerous window is as small as it can be: the
+        files inside are renamed first, then metadata.json is rewritten
+        (atomically) to match, and only then is the folder itself
+        renamed -- which is a single atomic operation, and the stored
+        filenames are relative so they stay correct across it. An
+        interruption after the metadata write therefore leaves a book
+        that loads perfectly under a stale folder name; only a failure
+        midway through the inner renames leaves a folder needing
+        repair, and that stretch is nothing but `Path.rename` calls.
+        """
+        target = self._new_directory(book.title)
+        target.rmdir()  # claimed the name; `rename` needs it free
+
+        new_stem = target.name
+        book.formats = [
+            BookFormat(kind=fmt.kind, path=_rename_in_place(fmt.path, new_stem))
+            for fmt in book.formats
+        ]
+        # The cover is always "cover.png", not named after the folder,
+        # so it needs no rename -- only repointing once the folder moves.
+        save_metadata(book, directory)
+
+        directory.rename(target)
+        book.directory = target
+        book.formats = [
+            BookFormat(kind=fmt.kind, path=target / fmt.path.name) for fmt in book.formats
+        ]
+        if book.cover_path is not None:
+            book.cover_path = target / book.cover_path.name
+
     def _find_book(
         self, title: str, author: str | None, isbn: str | None
     ) -> tuple[Book, MatchBasis] | None:
         """Find the existing book a file described by (title, author,
         isbn) belongs to, and the basis for that judgment.
+
+        Spec: GROUP-1 (the ISBN join) then GROUP-2 (strongest MATCH
+        across every existing book). Returning None is GROUP-3: this is
+        a new book.
 
         An exact ISBN match wins outright -- subject to the same guard
         `identify` applies to a lookup hit: a shared ISBN whose title
@@ -279,6 +489,9 @@ class Library:
         """
         existing = self._catalog.all()
 
+        # GROUP-1: a shared ISBN is not sufficient on its own -- run the
+        # same MATCH rule identification runs, or one false-positive ISBN
+        # in two unrelated files merges them.
         if isbn:
             for book in existing:
                 if book.isbn == isbn and match_basis(
@@ -286,6 +499,8 @@ class Library:
                 ):
                     return book, MatchBasis.ISBN
 
+        # GROUP-2: TITLE_AUTHOR beats TITLE_ONLY; ties resolve by sorted
+        # folder order (the catalog's), so imports are repeatable.
         title_only: Book | None = None
         for book in existing:
             basis = match_basis(title, author, book.title, book.author)
@@ -330,11 +545,44 @@ class Library:
         try:
             cover_bytes = self._source.fetch_cover(url)
         except MetadataSourceError as exc:
-            _log.warning("cover download for %r failed, continuing without it: %s", book.title, exc)
+            _log.warning(
+                "IDENT-6 cover download for %r failed, continuing without it: %s",
+                book.title, exc,
+            )
             return
         cover_path = directory / "cover.png"
         cover_path.write_bytes(cover_bytes)
         book.cover_path = cover_path
+
+
+_DEDUP_SUFFIX = re.compile(r" \(\d+\)$")
+
+
+def _folder_already_named(folder_name: str, base: str) -> bool:
+    """Whether a folder called `folder_name` is already the right home for
+    a book whose title sanitizes to `base`.
+
+    True for an exact match, and for the deduplicated variants
+    `_new_directory` mints ("Dune (2)"), so re-titling "Dune:" to "Dune"
+    leaves the book where it is instead of shuffling it to "Dune (3)".
+    """
+    return folder_name == base or _DEDUP_SUFFIX.sub("", folder_name) == base
+
+
+def _persisted_directory(book: Book) -> Path:
+    """The folder a curation operation will act on, or an error naming
+    why it cannot: an in-memory Book has nothing to edit."""
+    if book.directory is None:
+        raise CatalogError("this book has not been saved to a library yet")
+    return book.directory
+
+
+def _rename_in_place(path: Path, new_stem: str) -> Path:
+    """Rename one file to `<new_stem><its suffix>` beside itself."""
+    target = path.with_name(f"{new_stem}{path.suffix}")
+    if target != path:
+        path.rename(target)
+    return target
 
 
 def _place_format(book: Book, directory: Path, source: Path, kind: FormatKind) -> None:
@@ -358,6 +606,8 @@ def _apply_identification(
     book: Book, found: Identification, join: MatchBasis | None, *, title: str
 ) -> str | None:
     """Fold what `identify` found for one file into the book it joins.
+
+    Spec: GROUP-4 (and GROUP-3's `identified` for a new book).
 
     This is the evidence policy of `Library.import_file`, step 5, kept
     pure so it can be tested on bare `Book`s and reused by any

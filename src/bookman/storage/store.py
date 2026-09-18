@@ -97,6 +97,36 @@ class Catalog:
         self._ensure_index()
         index.upsert(self._index_path, target.name, book)
 
+    def relocate(self, old_name: str, book: Book) -> None:
+        """Record that `book`'s folder has been renamed on disk.
+
+        Writes the book into its *current* folder and moves its search
+        index row there, dropping the row for `old_name`. The new row
+        is written before the old one is dropped, so an interruption
+        leaves a stale row rather than no row -- and a stale row is
+        already tolerated (`search` logs and skips a name it cannot
+        load), whereas a missing one would hide the book until the
+        index was rebuilt.
+
+        The directory rename itself is the caller's business; `Catalog`
+        owns metadata.json and the index, not the library's layout
+        (ADR-12).
+
+        Args:
+            old_name: The folder name the book used to have.
+            book: The book, with `directory` already pointing at its
+                new folder.
+
+        Raises:
+            CatalogError: If `book.directory` is None.
+            OSError: If the write fails.
+        """
+        if book.directory is None:
+            raise CatalogError("a relocated book must carry its new directory")
+        self.put(book)
+        if book.directory.name != old_name:
+            index.delete(self._index_path, old_name)
+
     def search(self, query: str) -> list[Book]:
         """Find books whose title or author contains `query`, case-folded.
 

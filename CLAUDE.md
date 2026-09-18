@@ -56,4 +56,8 @@ Work this sequence — do not improvise tooling:
 ## Behavior Rules
 - Never add a runtime dependency without discussion — keep the dependency footprint small
 - When making an architectural decision (API shape, dependency policy, compatibility boundary), record it with `/log`
+- `docs/IDENTIFICATION.md` is the source of truth for identification, matching and
+  grouping. Change the spec **first** (with an ADR), then the code, then the
+  `docs/FEATURES.md` Part I row. Code that changes behavior without a spec change is
+  a bug in one of the two. The `matching` skill loads the spec on cue
 <!-- Add project-specific rules here. Workflow rules (context loading, commits, plan hygiene) live in .claude/claudify.md. -->

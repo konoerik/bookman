@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Curation: `Library.mark_reviewed`, `Library.edit` and
+  `Library.reidentify` — the half of the review workflow that was
+  missing. `edit` corrects a book's title, author or ISBN, renaming its
+  folder and format files when the title changes, normalizing an ISBN to
+  ISBN-13 and refusing an invalid one. Editing marks a book reviewed, so
+  the correction is not overwritten the next time another format of that
+  book is imported. `reidentify` looks a book up again; a reviewed book
+  keeps everything a human set and gains only a cover it was missing,
+  which is the way to get a cover for a book Open Library could not match
+  on its own.
+- `Book.id` — a stable identity minted once per book and stored in
+  `metadata.json`, which moves to schema version 3. Unlike `Book.directory`
+  it survives a rename of the book's folder, so a frontend can hold a
+  reference to a book, edit its title, and still be talking about the same
+  book afterwards. Libraries written by earlier versions are migrated on
+  read: a book with no stored id gets a deterministic one derived from its
+  folder name, which becomes a stored id the next time it is saved. Schema
+  versions 2 and 3 are both readable, and version 1 keeps its existing
+  migration path.
+
 ### Fixed
 - A junk title no longer groups unrelated files. A *placeholder* —
   "Untitled", "Untitled Document 2", "No Title", or a converter's

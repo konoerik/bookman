@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from bookman.errors import CatalogError
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis
 from bookman.storage.catalog import load_metadata, save_metadata
 
@@ -188,12 +189,13 @@ def test_save_then_load_metadata_roundtrips_none_fields(tmp_path):
     assert loaded.needs_review is True
 
 
-def test_save_metadata_writes_schema_version_2_without_confidence(tmp_path):
+def test_save_metadata_writes_schema_version_3_without_confidence(tmp_path):
     directory, book = _make_book_dir(tmp_path)
     save_metadata(book, directory)
     data = json.loads((directory / "metadata.json").read_text())
 
-    assert data["version"] == 2
+    assert data["version"] == 3
+    assert data["id"] == book.id
     assert "confidence" not in data
     assert data["identified"] == "isbn"
     assert data["grouped"] == "title_author"
@@ -234,8 +236,9 @@ def test_load_metadata_upgrades_version_1_file_on_next_save(tmp_path):
     save_metadata(load_metadata(directory), directory)
     data = json.loads((directory / "metadata.json").read_text())
 
-    assert data["version"] == 2
+    assert data["version"] == 3
     assert data["identified"] == "isbn"
+    assert data["id"]
 
 
 def test_load_metadata_rejects_unknown_version_1_confidence(tmp_path):
@@ -260,7 +263,7 @@ def test_load_metadata_rejects_unknown_match_basis(tmp_path):
 def test_load_metadata_rejects_unsupported_schema_version(tmp_path):
     directory, book = _make_book_dir(tmp_path)
     save_metadata(book, directory)
-    data = (directory / "metadata.json").read_text().replace('"version": 2', '"version": 99')
+    data = (directory / "metadata.json").read_text().replace('"version": 3', '"version": 99')
     (directory / "metadata.json").write_text(data)
 
     with pytest.raises(ValueError):
@@ -276,4 +279,84 @@ def test_load_metadata_rejects_non_boolean_reviewed(tmp_path):
     (directory / "metadata.json").write_text(data)
 
     with pytest.raises(ValueError):
+        load_metadata(directory)
+
+
+# --- I5: stable book identity (ADR-17) ----------------------------------
+
+
+def test_id_round_trips_through_save_and_load(tmp_path):
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+
+    assert load_metadata(directory).id == book.id
+
+
+def test_id_survives_a_folder_rename(tmp_path):
+    """The point of I5: a title edit renames the folder (K2), and the
+    book must still be the same book afterwards."""
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+
+    renamed = tmp_path / "A Corrected Title"
+    directory.rename(renamed)
+
+    assert load_metadata(renamed).id == book.id
+
+
+def test_two_books_get_different_ids(tmp_path):
+    first = Book(title="T", author=None, isbn=None)
+    second = Book(title="T", author=None, isbn=None)
+
+    assert first.id != second.id
+
+
+def test_pre_v3_file_gets_a_stable_id_across_repeated_loads(tmp_path):
+    """An un-upgraded book is read more than once before it is ever
+    saved; a freshly minted id each time would be no identity at all."""
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    del data["id"]
+    data["version"] = 2
+    (directory / "metadata.json").write_text(json.dumps(data))
+
+    assert load_metadata(directory).id == load_metadata(directory).id
+
+
+def test_pre_v3_derived_id_becomes_a_stored_id_on_save(tmp_path):
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    del data["id"]
+    data["version"] = 2
+    (directory / "metadata.json").write_text(json.dumps(data))
+
+    derived = load_metadata(directory)
+    save_metadata(derived, directory)
+    renamed = tmp_path / "Moved After Upgrade"
+    directory.rename(renamed)
+
+    assert json.loads((renamed / "metadata.json").read_text())["id"] == derived.id
+    assert load_metadata(renamed).id == derived.id
+
+
+def test_version_1_file_gets_an_id(tmp_path):
+    directory = tmp_path / "Old Book"
+    directory.mkdir()
+    (directory / "book.epub").write_bytes(b"epub bytes")
+    (directory / "metadata.json").write_text(json.dumps(_v1_metadata("verified")))
+
+    assert load_metadata(directory).id
+
+
+@pytest.mark.parametrize("bad", [42, "", "   ", [], {}])
+def test_load_metadata_rejects_a_malformed_id(tmp_path, bad):
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    data["id"] = bad
+    (directory / "metadata.json").write_text(json.dumps(data))
+
+    with pytest.raises(CatalogError):
         load_metadata(directory)

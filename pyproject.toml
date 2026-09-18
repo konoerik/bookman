@@ -1,7 +1,7 @@
 [project]
 name = "bookman"
 version = "0.1.0"
-description = "Local ebook library management: identify, catalog, and organize EPUB/PDF/MOBI files by title, independent of any frontend."
+description = "Local ebook library management: identify, catalog, and organize EPUB and PDF files by title, independent of any frontend."
 readme = "README.md"
 authors = [
     { name = "Erikton Konomi", email = "konoerik@gmail.com" }

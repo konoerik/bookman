@@ -10,12 +10,21 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 from bookman.errors import CatalogError
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis
 
 _METADATA_FILENAME = "metadata.json"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
+# Versions whose fields this module understands directly. Version 1 is
+# handled separately, by migration.
+_MODERN_VERSIONS = (2, _SCHEMA_VERSION)
+
+# Namespace for deriving an id for a pre-version-3 book that has none
+# stored. Deterministic, so repeated reads of an un-upgraded file agree
+# on the same id instead of minting a new one each time (ADR-17).
+_LEGACY_ID_NAMESPACE = uuid5(NAMESPACE_URL, "https://bookman.local/metadata-id")
 
 # Version-1 files had a single `confidence` field; map it onto the split
 # model. "verified" could only have come from an exact-ISBN lookup.
@@ -26,21 +35,23 @@ _V1_CONFIDENCE_TO_IDENTIFIED = {
 
 
 def save_metadata(book: Book, directory: Path) -> None:
-    """Write a Book's metadata to <directory>/metadata.json (schema version 2).
+    """Write a Book's metadata to <directory>/metadata.json (schema version 3).
 
-    Serializes title, author, isbn, identified, grouped, reviewed, and
+    Serializes id, title, author, isbn, identified, grouped, reviewed, and
     each format's kind and filename (relative to `directory`, not the
     absolute path stored on `BookFormat.path`), plus the cover filename
     if `book.cover_path` is set. Overwrites any existing metadata.json
-    in `directory`, upgrading a version-1 file in place. On success
-    `book.directory` is set to `directory` (ADR-11).
+    in `directory`, upgrading an older-version file in place. On
+    success `book.directory` is set to `directory`.
 
     Args:
         book: The book to serialize. Every `book.formats[*].path` and
             `book.cover_path`, if set, must be located directly inside
             `directory` (as they would be after a prior scan of that
             directory). If `book.directory` is already set it must be
-            `directory`: a book is never silently re-homed.
+            `directory`: a book is never silently re-homed. `book.id`
+            is written as-is, so a book that moves folders keeps its
+            identity (ADR-17).
         directory: The book's folder in the managed library.
 
     Raises:
@@ -53,6 +64,7 @@ def save_metadata(book: Book, directory: Path) -> None:
         raise CatalogError(f"book lives in {book.directory}, not {directory}")
     data = {
         "version": _SCHEMA_VERSION,
+        "id": book.id,
         "title": book.title,
         "author": book.author,
         "isbn": book.isbn,
@@ -79,15 +91,23 @@ def load_metadata(directory: Path) -> Book:
     as `directory / <stored filename>` — paths are always resolved
     against the directory actually passed in, not any path recorded at
     save time, so a relocated library folder still loads correctly.
-    `Book.directory` is set to `directory` for the same reason: the
-    folder is the book's identity (ADR-11) and is never stored inside
-    the file.
+    `Book.directory` is set to `directory` for the same reason: where a
+    book lives is never stored inside the file. What *is* stored is
+    `Book.id`, the book's identity since ADR-17 — the folder name is a
+    display name that a title edit will change.
 
     A version-1 file (no `version` key; a single `confidence` field)
     is migrated on read: "verified" becomes `identified=ISBN`,
     "needs_review" becomes `identified=None`; `grouped` is None and
-    `reviewed` False either way. The file on disk is upgraded the next
-    time it is saved.
+    `reviewed` False either way.
+
+    A pre-version-3 file carries no `id`. Rather than mint a fresh one
+    per read -- which would make the identity unstable, defeating its
+    purpose -- one is *derived* from the folder name, so every read of
+    an un-upgraded book agrees. It becomes a stored id the next time
+    the book is saved, and from then on survives a rename (ADR-17).
+
+    The file on disk is upgraded the next time it is saved.
 
     Args:
         directory: The book's folder in the managed library.
@@ -99,8 +119,8 @@ def load_metadata(directory: Path) -> Book:
         FileNotFoundError: If `directory/metadata.json` does not exist.
         CatalogError: If metadata.json exists but is not valid JSON, is
             missing a required field, has an unrecognized
-            FormatKind/MatchBasis/confidence value or schema version,
-            or names a format/cover filename that would resolve
+            FormatKind/MatchBasis/confidence value, schema version or
+            id, or names a format/cover filename that would resolve
             outside `directory` (e.g. via a path separator or `..`).
     """
     path = directory / _METADATA_FILENAME
@@ -123,6 +143,7 @@ def load_metadata(directory: Path) -> Book:
         cover = data.get("cover")
         identified, grouped, reviewed = _read_match_fields(data)
         return Book(
+            id=_read_id(data, directory),
             title=data["title"],
             author=data["author"],
             isbn=data["isbn"],
@@ -147,7 +168,7 @@ def _read_match_fields(data: dict[str, object]) -> _MatchFields:
         if confidence not in _V1_CONFIDENCE_TO_IDENTIFIED:
             raise ValueError(f"unrecognized confidence {confidence!r}")
         return _V1_CONFIDENCE_TO_IDENTIFIED[str(confidence)], None, False
-    if version != _SCHEMA_VERSION:
+    if version not in _MODERN_VERSIONS:
         raise ValueError(f"unsupported metadata schema version {version!r}")
     identified = data["identified"]
     grouped = data["grouped"]
@@ -159,6 +180,17 @@ def _read_match_fields(data: dict[str, object]) -> _MatchFields:
         MatchBasis(grouped) if grouped is not None else None,
         reviewed,
     )
+
+
+def _read_id(data: dict[str, object], directory: Path) -> str:
+    """The book's stored id, or one derived from its folder name for a
+    file written before schema version 3."""
+    stored = data.get("id")
+    if stored is None:
+        return uuid5(_LEGACY_ID_NAMESPACE, directory.name).hex
+    if not isinstance(stored, str) or not stored.strip():
+        raise ValueError(f"id must be a non-empty string, got {stored!r}")
+    return stored
 
 
 def _relative_filename(path: Path, directory: Path) -> str:

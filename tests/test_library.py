@@ -732,3 +732,45 @@ def test_import_directory_reports_unsupported_files_as_skipped(tmp_path, library
 
     assert result.skipped == [mobi]
     assert result.failed == []
+
+
+# --- I5: stable book identity through imports (ADR-17) ------------------
+
+
+def test_import_file_gives_each_new_book_its_own_id(tmp_path, library, source):
+    source.record = None
+
+    first = library.import_file(_make_epub(tmp_path / "a.epub", title="Dune"))
+    second = library.import_file(_make_epub(tmp_path / "b.epub", title="Emma"))
+
+    assert first.id and second.id
+    assert first.id != second.id
+
+
+def test_import_file_keeps_the_books_id_when_a_second_format_joins(tmp_path, library, source):
+    """A joining format must not re-mint the identity of the book it
+    joins, or every reference a frontend holds would go stale."""
+    source.record = None
+
+    epub = _make_epub(
+        tmp_path / "book.epub", title="Deep Work", identifiers=[f"urn:isbn:{VALID_ISBN13}"]
+    )
+    original = library.import_file(epub).id
+
+    pdf = _make_pdf(tmp_path / "book.pdf", title="Deep Work", text=f"ISBN {VALID_ISBN13}")
+    joined = library.import_file(pdf)
+
+    assert joined.grouped == MatchBasis.ISBN
+    assert joined.id == original
+
+
+def test_scan_reports_the_same_ids_across_calls(tmp_path, library, source):
+    source.record = None
+    library.import_file(_make_epub(tmp_path / "a.epub", title="Dune"))
+    library.import_file(_make_epub(tmp_path / "b.epub", title="Emma"))
+
+    first = {book.title: book.id for book in library.scan()}
+    second = {book.title: book.id for book in library.scan()}
+
+    assert first == second
+    assert len(set(first.values())) == 2

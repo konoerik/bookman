@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from uuid import uuid4
 
 
 class FormatKind(str, Enum):
@@ -73,6 +74,12 @@ class Book:
     """A logical ebook: one title, one or more on-disk formats.
 
     Attributes:
+        id: Stable identity, minted once and stored in metadata.json.
+            Unlike `directory` it survives a rename of the book's
+            folder, so a frontend can select a book, edit its title,
+            and still be talking about the same book afterwards
+            (ADR-17). Always set: a Book built in memory gets a fresh
+            one, a Book loaded from disk gets the stored one.
         title: Display title.
         author: Author name(s), or None if unknown.
         isbn: An ISBN-13 found in one of the book's files, or None.
@@ -90,14 +97,18 @@ class Book:
             title/author/isbn/cover/identified. A TITLE_ONLY grouping
             into a reviewed book clears the flag, since the book's
             contents changed in a way that deserves another look.
-        directory: The book's folder in the managed library -- its
-            identity (ADR-11). None until the book has been persisted;
-            set by every operation that reads or writes metadata.json.
+        directory: The book's folder in the managed library -- where
+            it lives, and its display name. None until the book has
+            been persisted; set by every operation that reads or
+            writes metadata.json. Not the book's identity since
+            ADR-17: use `id` for that, because a title edit renames
+            this folder.
     """
 
     title: str
     author: str | None
     isbn: str | None
+    id: str = field(default_factory=lambda: uuid4().hex)
     formats: list[BookFormat] = field(default_factory=list)
     cover_path: Path | None = None
     identified: MatchBasis | None = None
