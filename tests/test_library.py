@@ -774,3 +774,119 @@ def test_scan_reports_the_same_ids_across_calls(tmp_path, library, source):
 
     assert first == second
     assert len(set(first.values())) == 2
+
+
+# --- The core promise, pinned (FEATURES A4, A8, F5, F13, F16) ---
+
+
+def test_import_file_falls_back_to_filename_stem_when_file_has_only_an_author(
+    tmp_path, library, source
+):
+    # A4: nothing to search on, so no lookup; the stem names the book.
+    epub = _make_epub(tmp_path / "sicp_notes.epub", title=None, author="Hal Abelson")
+
+    book = library.import_file(epub)
+
+    assert book.title == "sicp_notes"
+    assert book.author == "Hal Abelson"
+    assert book.identified is None
+    assert book.needs_review
+    assert book.directory is not None and book.directory.name == "sicp_notes"
+    assert source.calls == []
+
+
+def test_import_file_with_no_metadata_at_all_is_shelved_under_its_stem_for_review(
+    tmp_path, library, source
+):
+    # A8: the degenerate file still lands somewhere findable.
+    epub = _make_epub(tmp_path / "scan 0042.epub", title=None, author=None)
+
+    book = library.import_file(epub)
+
+    assert book.title == "scan 0042"
+    assert book.author is None
+    assert book.isbn is None
+    assert book.identified is None
+    assert book.grouped is None
+    assert book.needs_review
+    assert book.directory is not None and book.directory.name == "scan 0042"
+    assert source.calls == []
+
+
+def test_import_file_isbn_join_beats_a_title_author_join_to_a_different_book(
+    tmp_path, library, source
+):
+    # F5: two shelved books -- one shares the file's (asserted) ISBN, the
+    # other its title and author. GROUP-1 runs first, so the ISBN decides;
+    # the author agreeing is what lets the ISBN survive the title mismatch.
+    by_isbn = library.import_file(
+        _make_epub(
+            tmp_path / "by_isbn.epub",
+            title="Deep Work",
+            author="Cal Newport",
+            identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+        )
+    )
+    by_title = library.import_file(
+        _make_epub(tmp_path / "by_title.epub", title="Digital Minimalism", author="Cal Newport")
+    )
+    assert by_isbn.directory != by_title.directory
+
+    book = library.import_file(
+        _make_epub(
+            tmp_path / "new.epub",
+            title="Digital Minimalism",
+            author="Cal Newport",
+            identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+        )
+    )
+
+    assert book.directory == by_isbn.directory
+    assert book.grouped == MatchBasis.ISBN
+    assert len(library.scan()) == 2
+    (untouched,) = [b for b in library.scan() if b.directory == by_title.directory]
+    assert [fmt.kind for fmt in untouched.formats] == [FormatKind.EPUB]
+
+
+def test_import_file_reimport_of_the_same_file_is_idempotent(tmp_path, library):
+    # F13: one format entry, the file replaced, nothing else disturbed.
+    epub = _make_epub(tmp_path / "book.epub", title="Deep Work", author="Cal Newport")
+    first = library.import_file(epub)
+    stored = first.formats[0].path
+    stored.write_bytes(b"stale")  # so we can see the copy actually happened
+
+    again = library.import_file(epub)
+
+    assert again.id == first.id
+    assert again.directory == first.directory
+    assert [fmt.path for fmt in again.formats] == [stored]
+    assert stored.read_bytes() == epub.read_bytes()
+    assert sorted(p.name for p in first.directory.iterdir()) == ["Deep Work.epub", "metadata.json"]
+    assert len(library.scan()) == 1
+
+
+def test_import_order_does_not_change_the_end_state(tmp_path, source):
+    # F16: {epub without ISBN, pdf with ISBN}, both ways round.
+    source.record = Candidate(title="Deep Work", author="Cal Newport", cover_url=None)
+
+    def shelve(order: str) -> Book:
+        library = Library(tmp_path / order, source=source)
+        epub = _make_epub(tmp_path / f"{order}.epub", title="Deep Work", author="Cal Newport")
+        pdf = _make_pdf(
+            tmp_path / f"{order}.pdf", title="Deep Work", author="Cal Newport",
+            text=f"ISBN {VALID_ISBN13}",
+        )
+        for path in (epub, pdf) if order == "epub_first" else (pdf, epub):
+            library.import_file(path)
+        (book,) = library.scan()
+        return book
+
+    a, b = shelve("epub_first"), shelve("pdf_first")
+
+    def state(book: Book) -> tuple:
+        return (
+            book.title, book.author, book.isbn, book.identified, book.grouped,
+            book.needs_review, sorted(fmt.kind for fmt in book.formats),
+        )
+
+    assert state(a) == state(b)

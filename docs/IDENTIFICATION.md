@@ -104,7 +104,7 @@ flowchart TD
 
     M1 -->|yes| M1G{"Does anything contradict it?"}
     M1G -->|"scraped ISBN,<br/>titles both present and disagree"| NO1["No match"]
-    M1G -->|"asserted ISBN,<br/>title AND author both disagree"| NO1
+    M1G -->|"asserted ISBN,<br/>titles disagree and<br/>author does not vouch"| NO1
     M1G -->|"otherwise"| ISBN["Basis: ISBN"]
 
     M1 -->|no| M2{"MATCH-2<br/>Author evidence?"}
@@ -154,6 +154,7 @@ ISBN: `asserted` from a metadata field, `scraped` from page text (ADR-14),
 | 18 | MATCH-3 | Book | — | Book | — | — | none | A generic title cannot carry a match alone (A12) |
 | 19 | MATCH-3 | Untitled | — | Untitled | — | — | none | A placeholder is no title at all (A12) |
 | 20 | MATCH-3 | Dune | — | Emma | Jane Austen | — | none | Different titles, nothing to corroborate (C9) |
+| 21 | MATCH-1 | Deep Work | Cal Newport | The three voices of poetry | — | asserted | none | Title contradicts and no author vouches for the ISBN (B11) |
 
 Rows are added when a rule is added, not when a bug is found — a bug means
 the code disagrees with a row that already exists, which is a
@@ -178,6 +179,7 @@ derived_from:
   - ADR-13                   # lookups go through a MetadataSource, not a named provider
   - ADR-14                   # ISBN provenance: scraped vs asserted
   - ADR-15                   # junk titles in two tiers
+  - ADR-19                   # title disagreement vetoes an asserted ISBN unless the author vouches
 # FEATURES rows named in `sources:` below are illustrative scenarios,
 # not sources of authority. See the History note at the top of this file.
 
@@ -274,9 +276,13 @@ steps:
         sources: [ADR-14, "FEATURES B6"]
       - when: shared ISBN, and the ISBN was asserted in a metadata field
         then: >
-          Reject only if title AND author both disagree. Either one
-          agreeing is enough, because a shared ISBN is a strong prior.
-        sources: [ADR-9, "FEATURES B5"]
+          Reject if the titles disagree and the author does not vouch
+          for the number -- that is, the author disagrees or is absent
+          on either side. An agreeing author rescues a title mismatch,
+          because a shared ISBN is a strong prior; but a title that
+          contradicts with nothing to answer it is a record of some
+          other book.
+        sources: [ADR-9, ADR-19, "FEATURES B5", "FEATURES B11"]
       - when: shared ISBN, and there is no real title on one side
         then: >
           The basis is ISBN. A missing title — including a placeholder or
@@ -290,9 +296,10 @@ steps:
     rules:
       - Two authors agree when they name at least one person in common.
       - >
-        Reorder "Last, First"; ignore accents, initials and
-        placeholder names that identify nobody ("Anonymous", "Unknown",
-        "Various"). A name that is only a placeholder is no author.
+        Reorder "Last, First"; ignore accents, initials, generational
+        suffixes ("Jr.", "III") and placeholder names that identify
+        nobody ("Anonymous", "Unknown", "Various"). A name that is only
+        a placeholder is no author.
       - Several authors may be listed; sharing one of them is agreement.
     outcomes:
       - when: authors disagree

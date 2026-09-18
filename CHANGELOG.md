@@ -48,6 +48,30 @@ All notable changes to this project are documented here. The format follows
   strength of a shared author alone (the "Also by this author" citation
   case); it now needs the record's title to agree with the file's. ISBNs
   from an EPUB's `dc:identifier` are unaffected.
+- A file carrying several ISBNs — a print and an ebook ISBN, or a cited
+  list — now has each tried in turn until one is accepted. Previously only
+  the first was looked up, so if Open Library did not know it, or its
+  record contradicted the file, the rest were never tried. A rejected ISBN
+  is dropped; the first one Open Library does not know is kept as the
+  file's own claim.
+- ISBN lookup works again. Open Library's Books API (`/api/books`) stopped
+  answering — 404 on every bibkey — which left every ISBN-based
+  identification falling through to title search. The lookup now goes
+  through the Search API (`/search.json?isbn=`), which answers in one
+  request with the same document shape title search already uses.
+  Requests also now carry a `bookman/<version>` User-Agent, as Open
+  Library asks of API clients.
+- An ISBN from a file's metadata is no longer accepted on the strength
+  of a record whose title contradicts the file's and which names no
+  author. Previously "title and author must both disagree" let a record
+  with no author through, so a mis-keyed ISBN landing on some other
+  book's record was identified with confidence. Now the title
+  disagreement stands unless the author agrees; the ISBN is dropped and
+  the file goes to title search instead (ADR-19).
+- A generational suffix ("Martin Luther King Jr.", "King, Martin
+  Luther, Jr.") is no longer taken as the surname when authors are
+  compared, so such a file now agrees with Open Library's record
+  instead of being vetoed on author.
 
 ### Added
 - `ImportBatchResult` is exported from `bookman` itself, so a frontend

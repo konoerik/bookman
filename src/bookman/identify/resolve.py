@@ -9,6 +9,7 @@ path through the pipeline can be read off without stepping through code.
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,12 +53,14 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
 
     Spec: IDENT-1..6.
 
-    1. If the file carries an ISBN, look it up. The record is accepted
-       only if `match_basis(..., same_isbn=True)` agrees -- i.e. the
-       record's title and author don't *both* contradict the file's,
-       or, for an ISBN scraped from page text, the titles agree. If
-       it's rejected, the ISBN is dropped from the result too, so a
-       false-positive ISBN can't later seed an ISBN-based grouping.
+    1. If the file carries ISBNs, look each up in turn until one is
+       accepted. A record is accepted only if
+       `match_basis(..., same_isbn=True)` agrees -- i.e. the record's
+       title and author don't *both* contradict the file's, or, for an
+       ISBN scraped from page text, the titles agree. A rejected ISBN
+       is dropped from the result, so a false-positive ISBN can't later
+       seed an ISBN-based grouping; an ISBN the source doesn't know is
+       kept (the first such one, if several) as the file's own claim.
     2. Otherwise, if the file has a usable title -- a placeholder like
        "Untitled" is not one -- search by title (and author,
        if known) and accept the best candidate `match_basis` agrees
@@ -85,44 +88,45 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         (spec PR1: identification is advisory, never blocking).
     """
     isbn: str | None = None
-    if parsed.isbns:
-        # IDENT-1. DIVERGENCE: the spec says to try each ISBN in turn until
-        # one is accepted; only the first is tried here, so a file carrying
-        # both a print and an ebook ISBN gets one chance. Tracked as
-        # docs/FEATURES.md A10 -- do not fix silently, it is a spec-backed
-        # behavior change.
-        file_isbn = parsed.isbns[0]
+    # IDENT-1: try each ISBN in turn until one is accepted. A file can
+    # legitimately carry the print and ebook ISBNs, or a cited list; the
+    # first is not privileged.
+    for file_isbn in parsed.isbns:
         # IDENT-2: a failed lookup and an unknown ISBN are both "no record".
         record = _safe(
-            lambda: source.lookup_by_isbn(file_isbn), f"IDENT-2 ISBN lookup {file_isbn}"
+            functools.partial(source.lookup_by_isbn, file_isbn),
+            f"IDENT-2 ISBN lookup {file_isbn}",
         )
         if record is None:
             # IDENT-2: keep the ISBN -- it is the file's own claim, and the
-            # source not knowing it proves nothing.
-            isbn = file_isbn
-        else:
-            # IDENT-3: cross-check the record against the file.
-            basis = match_basis(
-                parsed.title,
-                parsed.author,
-                record.title,
-                record.author,
-                same_isbn=True,
-                isbn_scraped=parsed.isbns_scraped,
+            # source not knowing it proves nothing. The first such claim
+            # stands; the parser already ordered them best first.
+            _log.debug("IDENT-2 no record for ISBN %s", file_isbn)
+            if isbn is None:
+                isbn = file_isbn
+            continue
+        # IDENT-3: cross-check the record against the file.
+        basis = match_basis(
+            parsed.title,
+            parsed.author,
+            record.title,
+            record.author,
+            same_isbn=True,
+            isbn_scraped=parsed.isbns_scraped,
+        )
+        if basis is not None:
+            _log.debug(
+                "IDENT-3 accepted ISBN %s record %r (%s)",
+                file_isbn, record.title, basis.value,
             )
-            if basis is not None:
-                _log.debug(
-                    "IDENT-3 accepted ISBN %s record %r (%s)",
-                    file_isbn, record.title, basis.value,
-                )
-                return _accepted(parsed, record, file_isbn, basis)
-            # IDENT-3: the record contradicts the file, so this ISBN isn't
-            # this book's. `isbn` stays None -- dropping it stops a false
-            # positive seeding an ISBN-based join later (GROUP-1).
-            _log.info(
-                "IDENT-3 rejected ISBN %s: record %r by %r contradicts file %r by %r",
-                file_isbn, record.title, record.author, parsed.title, parsed.author,
-            )
+            return _accepted(parsed, record, file_isbn, basis)
+        # IDENT-3: the record contradicts the file, so this ISBN isn't
+        # this book's. It is dropped -- never kept as `isbn` -- so a false
+        # positive cannot seed an ISBN-based join later (GROUP-1).
+        _log.info(
+            "IDENT-3 rejected ISBN %s: record %r by %r contradicts file %r by %r",
+            file_isbn, record.title, record.author, parsed.title, parsed.author,
+        )
 
     # IDENT-4: a placeholder title is not worth searching on.
     file_title = parsed.title

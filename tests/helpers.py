@@ -30,11 +30,15 @@ class FakeSource:
     Attributes:
         record: What `lookup_by_isbn` returns for *any* ISBN (None =
             the source has no record).
+        records: Per-ISBN answers that take precedence over `record`,
+            for scripting a file that carries several ISBNs.
         results: What `search` returns for *any* query.
         cover: What `fetch_cover` returns; None makes it raise
             `MetadataSourceError`, like a failed download.
         fail: When True, every lookup and search raises
             `MetadataSourceError` -- the network is down.
+        fail_isbns: ISBNs whose lookup alone raises, for a source that
+            is up but chokes on one request.
         calls: Every call made, as ("lookup_by_isbn", isbn),
             ("search", title, author) or ("fetch_cover", url) tuples.
     """
@@ -43,21 +47,24 @@ class FakeSource:
         self,
         *,
         record: Candidate | None = None,
+        records: dict[str, Candidate | None] | None = None,
         results: list[Candidate] | None = None,
         cover: bytes | None = None,
         fail: bool = False,
     ) -> None:
         self.record = record
+        self.records = dict(records or {})
         self.results = list(results or [])
         self.cover = cover
         self.fail = fail
+        self.fail_isbns: set[str] = set()
         self.calls: list[tuple[str, ...]] = []
 
     def lookup_by_isbn(self, isbn: str) -> Candidate | None:
         self.calls.append(("lookup_by_isbn", isbn))
-        if self.fail:
+        if self.fail or isbn in self.fail_isbns:
             raise MetadataSourceError("boom")
-        return self.record
+        return self.records.get(isbn, self.record)
 
     def search(self, title: str, author: str | None = None) -> list[Candidate]:
         self.calls.append(("search", title, author or ""))

@@ -102,6 +102,76 @@ def test_identify_keeps_isbn_when_open_library_has_no_record(source):
     assert found.isbn == ISBN
 
 
+PRINT_ISBN = "9781455586691"
+EBOOK_ISBN = "9781455586677"
+EMMA = Candidate(title="Emma", author="Jane Austen", cover_url="emma.jpg")
+
+
+def test_identify_tries_the_next_isbn_when_the_first_is_unknown(source):
+    source.records = {EBOOK_ISBN: DEEP_WORK}
+
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.isbn == EBOOK_ISBN
+    assert found.cover_url == "dw.jpg"
+    assert not source.called("search")
+
+
+def test_identify_tries_the_next_isbn_when_the_first_is_rejected(source):
+    source.records = {PRINT_ISBN: EMMA, EBOOK_ISBN: DEEP_WORK}
+
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.isbn == EBOOK_ISBN
+
+
+def test_identify_stops_at_the_first_accepted_isbn(source):
+    source.records = {PRINT_ISBN: DEEP_WORK, EBOOK_ISBN: DEEP_WORK}
+
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.isbn == PRINT_ISBN
+    assert source.calls == [("lookup_by_isbn", PRINT_ISBN)]
+
+
+def test_identify_keeps_the_first_unknown_isbn_when_none_is_accepted(source):
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.basis is None
+    assert found.isbn == PRINT_ISBN
+    assert [c[1] for c in source.calls if c[0] == "lookup_by_isbn"] == [PRINT_ISBN, EBOOK_ISBN]
+
+
+def test_identify_drops_a_rejected_isbn_but_keeps_an_unknown_one(source):
+    source.records = {PRINT_ISBN: EMMA}
+
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.basis is None
+    assert found.isbn == EBOOK_ISBN
+
+
+def test_identify_keeps_no_isbn_when_every_one_is_rejected(source):
+    source.records = {PRINT_ISBN: EMMA, EBOOK_ISBN: EMMA}
+
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.basis is None
+    assert found.isbn is None
+
+
+def test_identify_moves_on_to_the_next_isbn_when_a_lookup_fails(source):
+    source.fail_isbns = {PRINT_ISBN}
+    source.records = {EBOOK_ISBN: DEEP_WORK}
+
+    found = identify(_parsed(isbns=[PRINT_ISBN, EBOOK_ISBN]), source)
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.isbn == EBOOK_ISBN
+
+
 def test_identify_falls_back_to_search_after_unknown_isbn(source):
     source.results = [DEEP_WORK]
 

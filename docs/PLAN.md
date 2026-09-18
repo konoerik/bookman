@@ -6,19 +6,19 @@
 
 Remaining v1.0 work (FEATURES *v1.0 scope*), in harm order:
 
-1. **A10** — IDENT-1 says try each ISBN until one is accepted;
-   `resolve.identify` tries only `isbns[0]`. The one open divergence
-   between the spec and the code.
-2. **D9** — "Martin Luther King Jr." yields surname `{'jr'}`.
-3. **F14** — blocked on OQ1.
-4. The five ❓ rows that pin the core promise: **A4, A8** (filename-stem
-   fallback), **F5** (ISBN beats a title match), **F13** (re-import is
-   idempotent), **F16** (order independence). Cheap tests, and F16
-   matters more if format-priority import ordering is ever tried.
-5. **CLI commands for K1–K3** — N7 dropped to 🔶 when the operations
-   landed without them.
+1. **CLI commands for K1–K3** — N7 dropped to 🔶 when the operations
+   landed without them. The last unblocked v1.0 item.
+2. **F14** — blocked on OQ1.
 
 Decisions needed (they block behavior, not the list above):
+- **File's author stands on a corroborated match** (IDENT-6): on a
+  TITLE_AUTHOR/ISBN match the record's author *replaces* the file's, and
+  Open Library returns *work*-level `author_name`, which is the union
+  across editions — so an audiobook narrator promoted to the work lands
+  on the book ("Martin Luther King Jr., J.D. Jackson", seen live
+  2026-09-18). ADR-10's argument applied to authors; one branch in
+  `_accepted`. OL has no role field anywhere, so this is the only fix
+  that works from every lookup route.
 - **OQ3 / C7** — is a different edition a different book?
 - **OQ1 / F14** — two files of the same format kind for one book.
 - Volumes: C17 keeps them apart. Should they also be *related* (I6
@@ -26,10 +26,12 @@ Decisions needed (they block behavior, not the list above):
 
 ## Backlog
 <!-- Accepted but not yet active. Load this section only when planning or prioritizing. -->
+- Open Library signals worth using (surveyed 2026-09-18 against the *Why We Can't Wait* work, 29 editions): (a) `search.json?q=isbn:X&fields=editions,editions.cover_i,editions.format,editions.publisher` returns the work **plus the one edition carrying X** in the same single request — the owned edition's cover instead of the work's default, and `format`/`publisher` for free; parsing change only. (b) Work `key` + work-level `isbn[]` (every edition's ISBN): an EPUB with ISBN X and a PDF with ISBN Y are provably the same work — stronger than today's `title_author` join, and a stable identity beyond one ISBN; needs a `work_id` on `Book` and a new GROUP evidence kind (spec + ADR). (c) `language` on candidates vs EPUB `dc:language` as a MATCH veto (spec + ADR). (d) `format` in IDENT-5 ranking: `audio cd` below anything for an EPUB/PDF file (spec + ADR). (e) `author_key` is author *identity* — the real fix for D6 — but only on the OL side; needs a name→key step. (f) `edition_count`/`readinglog_count` as an explicit tie-break among equal-basis candidates ("Summary of Deep Work" vs *Deep Work*) — spec says relevance doesn't decide, so ADR. Not usable: no role field anywhere (narrator vs author is indistinguishable; `by_statement`/`contributions` are free text); `physical_format` is free-text and missing on 20/29 editions; `contributor`/`person` are noise. Edition-true authors exist only via `/isbn/…json` → `/works/…json` → `/authors/…json`.
+- Cache at the `MetadataSource` seam (ADR-13): `import_file` runs `identify` (network) *before* `_find_book` (catalog), by design — GROUP-4 needs the follow-up format's own identification to decide upgrade/no-downgrade (F7/F8). So the PDF of an already-shelved EPUB does the full Open Library round-trip again. Fix is a memoizing wrapper source, not a reorder: per import batch at minimum, or persisted in the library so a re-imported ISBN never hits the network. No spec change. (Raised 2026-09-18.)
 - Matching follow-ups (from the live Gutenberg smoke run after ADR-9): author agreement is surname-only, so "Frank Herbert" vs "Brian Herbert" count as the same author (pinned in `test_match.py` as a known limitation); a title whose subtitle follows a period ("A CHRISTMAS CAROL IN PROSE. Being a Ghost Story...") isn't split, since ". " also appears inside titles ("Mr. Darcy..."); Open Library title search is sent the raw file title, so a long Gutenberg-style title only surfaces the cover-less Gutenberg-derived records — acceptable, but a second search on the normalized short title could find a cover.
 - TUI/CLI needs a way to *set* `Book.reviewed` (and correct title/author) — the library has the field and honors it on import, but nothing writes it yet besides `save_metadata` directly.
 - MOBI parser (`formats/mobi.py`): one module exposing a `FormatParser` plus a `register(".mobi", FormatKind.MOBI, parse_mobi)` in `formats/__init__.py` (R7 made this a drop-in). Two sample files still skipped — and staying skipped: deprioritized below v1.0 on 2026-09-18 (legacy Amazon format, most expensive parser under ADR-3; see ADR-2 Amendment and FEATURES L11).
-- Feature map follow-ups (docs/FEATURES.md, 2026-09-15): remaining Part I gaps from its "Gap summary" — F14 same-kind format silently overwritten (needs a decision: reject / version / report — really I11 + L6), A10 only first ISBN tried, D9 "Jr." surnames. (C17, B6, B10 closed 2026-09-16; A12 junk titles and L2/L10 exports closed 2026-09-17.) Part II first slice: I5 stable id (R2), K1 set reviewed, K2 edit fields.
+- Feature map follow-ups (docs/FEATURES.md, 2026-09-15): remaining Part I gaps from its "Gap summary" — F14 same-kind format silently overwritten (needs a decision: reject / version / report — really I11 + L6). (A10 and D9 closed 2026-09-18.) (C17, B6, B10 closed 2026-09-16; A12 junk titles and L2/L10 exports closed 2026-09-17.) Part II first slice: I5 stable id (R2), K1 set reviewed, K2 edit fields.
 - Release hygiene leftovers: import copies the file before loading metadata (orphan on failed save); document single-writer assumption / lock file. (README, CHANGELOG, CI, LICENSE done 2026-09-16.)
 - Known accepted risk: EPUB parsing uses stdlib `xml.etree.ElementTree` with no entity-expansion guard (billion-laughs). Fixing needs a new dependency (`defusedxml`), which conflicts with the pypdf-only dependency policy (ADR-3) — deliberately not fixed for now.
 - `_sanitize_dirname` doesn't reject Windows-reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) — irrelevant on macOS today, worth a note if Windows ever becomes a target.
@@ -38,6 +40,11 @@ Decisions needed (they block behavior, not the list above):
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- A10 (2026-09-18): `resolve.identify` walks every ISBN in turn (IDENT-1) — a rejected one is dropped, the first unknown one kept, the first accepted one wins. The one open spec divergence, closed; seen live with a three-ISBN EPUB.
+- ISBN lookup migrated (2026-09-18): Open Library's `/api/books` returns 404 on every bibkey (their docs' own example included, any User-Agent), so `lookup_by_isbn` now goes through `search.json?isbn=` — one request, same doc shape as title search. Requests carry a `bookman/<version>` User-Agent. Cost noted: author names on an ISBN hit are now work-level.
+- ADR-19 (2026-09-18): an asserted ISBN is rejected when the titles disagree and the author does not vouch (disagrees or is absent). Found live: a junk OL record with no author was accepted for "Deep Work" with `needs_review=False`. Spec MATCH-1 amended, decision-table row 21, FEATURES B11. The narrower rule was chosen over the symmetric one so row 9 (generic titles, disagreeing authors) doesn't move.
+- D9 (2026-09-18): generational suffixes (Jr/Sr/II/III/IV, with or without a comma) dropped before the surname is taken; "King, Martin Luther, Jr." no longer reads as three people. Seen live: *Why We Can't Wait* identified `title_author` with cover.
+- The five ❓ rows pinned (2026-09-18): A4/A8 stem fallback with no source call, F5 ISBN join beats a title/author join (asserted ISBN; a scraped one would lose per ADR-14 — recorded on the row), F13 re-import idempotent, F16 order independence. The code was right in all five. 402 → 421 tests.
 - Settled the identification-spec review by keeping both documents and inverting their relationship (ADR-16): `docs/IDENTIFICATION.md` is the source of truth, derived from the ADRs alone; `docs/FEATURES.md` Part I is the conformance report against it, with a `Step` column on all 86 Part I rows. Bound to the code by `bookman.identify.SPEC_VERSION`, a `Spec:` line on every implementing function, step IDs in the log lines, and `tests/test_spec_conformance.py` — which enforces the step trace and executes the spec's new 20-row decision table against `match_basis`.
 - Drew the v1.0 line in FEATURES, wrote the format boundary down (H13, ROADMAP *Out of Scope*), and moved C7 (are editions different books) out of the spec's normative text into `open_questions` as OQ3, since FEATURES marked it unconfirmed.
 - Deprioritized MOBI below v1.0 (ADR-2 Amendment): a legacy Amazon format, the most expensive parser under ADR-3, and unparsed files already degrade gracefully (H6). ROADMAP Phase 2 became curation and MOBI became Phase 4; the PyPI description that claimed MOBI support was corrected.

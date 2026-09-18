@@ -29,6 +29,8 @@ _AUTHOR_SEPARATORS = re.compile(r"\s*(?:;|&|\band\b)\s*")
 _NUMBER_TOKEN = re.compile(r"^(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3}))$")
 # "Authors" that name nobody and so can't corroborate anything.
 _NON_AUTHORS = frozenset({"anonymous", "anon", "unknown", "various", "unknown author"})
+# Generational suffixes: part of the name, never the surname (FEATURES D9).
+_NAME_SUFFIXES = frozenset({"jr", "jnr", "sr", "snr", "ii", "iii", "iv"})
 # Junk titles come in two strengths (docs/FEATURES.md A12).
 #
 # Placeholder words name no book at all: nothing is ever really called
@@ -153,8 +155,9 @@ def author_surnames(author: str) -> set[str]:
     name token (or only initials); otherwise the commas separate
     people. Each name is NFKD-normalized with combining marks removed
     (so accents don't matter) and casefolded; the surname is the last
-    token. Single-letter or dotted initials are ignored, as are
-    placeholders that name nobody ("Anonymous", "Unknown", ...).
+    token that isn't a generational suffix ("Jr.", "III"). Single-letter
+    or dotted initials are ignored, as are placeholders that name
+    nobody ("Anonymous", "Unknown", ...).
 
     Args:
         author: A raw author string, possibly naming several people.
@@ -174,13 +177,22 @@ def author_surnames(author: str) -> set[str]:
 
 
 def _name_tokens(name: str) -> list[str]:
-    return [t for t in _NON_WORD.sub(" ", name).split() if len(t) > 1]
+    """A name's comparable tokens: initials dropped, and a trailing
+    generational suffix dropped when a name remains in front of it
+    ("King Jr" -> ["king"], but "VIII" alone stays)."""
+    tokens = [t for t in _NON_WORD.sub(" ", name).split() if len(t) > 1]
+    while len(tokens) > 1 and tokens[-1] in _NAME_SUFFIXES:
+        tokens.pop()
+    return tokens
 
 
 def _split_on_commas(text: str) -> list[str]:
     """Return the individual names in a comma-bearing author string,
     with a "Last, First" pair reordered to "First Last"."""
     parts = [p.strip() for p in text.split(",") if p.strip()]
+    # "King, Martin Luther, Jr.": a suffix set off by its own comma is
+    # not a person, so it must not count as one when the commas are read.
+    parts = [p for p in parts if _NON_WORD.sub("", p).strip() not in _NAME_SUFFIXES]
     if len(parts) == 2 and (len(_name_tokens(parts[0])) < 2 or len(_name_tokens(parts[1])) < 2):
         return [f"{parts[1]} {parts[0]}"]
     return parts
@@ -263,11 +275,12 @@ def match_basis(
     grouping call, so the two can never drift apart (spec PR2).
 
     Rules, in order:
-    - `same_isbn`: ISBN, unless title and author are both present on
-      both sides and *both* disagree -- the guard against a
-      false-positive ISBN (a checksum-passing number scraped from a
-      PDF) overwriting good data. Either agreeing is enough, since a
-      shared ISBN is a strong prior.
+    - `same_isbn`: ISBN, unless the titles are both present and
+      disagree and the author does not vouch for the number (disagrees,
+      or is missing on either side) -- the guard against a false
+      ISBN, mis-keyed or scraped, landing on some other book's record.
+      An agreeing author rescues a title mismatch, since a shared ISBN
+      is a strong prior.
     - ... except when `isbn_scraped`: an ISBN pulled from page text
       may be a *cited* book's ("Also by this author ..."), and a
       shared author is exactly what such a citation shares. So a
@@ -311,8 +324,10 @@ def match_basis(
 
     if same_isbn:
         # A generic title carries no argument against an ISBN, so it
-        # doesn't get to veto one.
-        if have_titles and not generic and not title_ok and (isbn_scraped or author_ok is False):
+        # doesn't get to veto one. A real title that disagrees does,
+        # unless the author vouches for the number (ADR-19) -- and for a
+        # scraped ISBN not even then (ADR-14).
+        if have_titles and not generic and not title_ok and (isbn_scraped or author_ok is not True):
             return None
         return MatchBasis.ISBN
 

@@ -11,10 +11,10 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from importlib.metadata import PackageNotFoundError, version
 
 from bookman.identify.source import Candidate, MetadataSourceError
 
-_BOOKS_API_URL = "https://openlibrary.org/api/books"
 _SEARCH_API_URL = "https://openlibrary.org/search.json"
 _COVER_BY_ID_URL = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
 _SEARCH_FIELDS = "title,author_name,cover_i"
@@ -40,42 +40,40 @@ class OpenLibrarySource:
 
 
 def lookup_by_isbn(isbn: str) -> Candidate | None:
-    """Query Open Library's Books API for metadata by ISBN.
+    """Query Open Library for the record behind an ISBN.
 
-    Calls the Books API (bibkeys=ISBN:<isbn>, jscmd=data) which returns
-    title, resolved author name(s), and cover image URLs in a single
-    request. `isbn` is expected to already be a normalized, validated
-    ISBN-13 (see bookman.identify.isbn.normalize_isbn) -- this function
-    does not validate it further before querying.
+    Goes through the Search API (`/search.json?isbn=`), which resolves
+    author names and the cover id in one request and returns the same
+    document shape `search` parses. The Books API (`/api/books`) used
+    to do this job and stopped answering (404 on every bibkey, observed
+    2026-09-18); the edition endpoint (`/isbn/{isbn}.json`) still works
+    but carries no author names, which would cost two further requests
+    (work, then author) per hit.
+
+    `isbn` is expected to already be a normalized, validated ISBN-13
+    (see bookman.identify.isbn.normalize_isbn) -- this function does
+    not validate it further before querying.
 
     Args:
         isbn: A normalized ISBN-13 (digits only, no separators).
 
     Returns:
-        A Candidate, or None if Open Library has no record for `isbn`
-        (not treated as an error). Individual fields on the result may
-        still be None if Open Library's record omits them.
+        A Candidate for the first document Open Library returns, or
+        None if it has none for `isbn` (not treated as an error).
+        Individual fields on the result may still be None if the
+        document omits them.
 
     Raises:
         OpenLibraryError: If the request fails (network error, non-2xx
             response) or the response body isn't the expected JSON shape.
     """
-    bibkey = f"ISBN:{isbn}"
-    query = urllib.parse.urlencode({"bibkeys": bibkey, "jscmd": "data", "format": "json"})
-    raw = _fetch_bytes(f"{_BOOKS_API_URL}?{query}")
-
+    params = {"isbn": isbn, "limit": "1", "fields": _SEARCH_FIELDS}
+    raw = _fetch_bytes(f"{_SEARCH_API_URL}?{urllib.parse.urlencode(params)}")
     try:
-        payload = json.loads(raw)
-        entry = payload.get(bibkey)
-        if entry is None:
-            return None
-        return Candidate(
-            title=entry.get("title"),
-            author=_join_authors(entry.get("authors")),
-            cover_url=_best_cover_url(entry.get("cover")),
-        )
-    except (json.JSONDecodeError, AttributeError, TypeError) as exc:
-        raise OpenLibraryError(f"unexpected response shape for {bibkey}") from exc
+        candidates = _parse_search_docs(raw)
+    except OpenLibraryError as exc:
+        raise OpenLibraryError(f"unexpected response shape for ISBN {isbn}") from exc
+    return candidates[0] if candidates else None
 
 
 def search(title: str, author: str | None = None, *, limit: int = 5) -> list[Candidate]:
@@ -107,7 +105,11 @@ def search(title: str, author: str | None = None, *, limit: int = 5) -> list[Can
     if author:
         params["author"] = author
     raw = _fetch_bytes(f"{_SEARCH_API_URL}?{urllib.parse.urlencode(params)}")
+    return _parse_search_docs(raw)
 
+
+def _parse_search_docs(raw: bytes) -> list[Candidate]:
+    """Turn a Search API response body into Candidates, one per document."""
     try:
         payload = json.loads(raw)
         docs = payload.get("docs") or []
@@ -124,7 +126,7 @@ def search(title: str, author: str | None = None, *, limit: int = 5) -> list[Can
 
 
 def fetch_cover(url: str) -> bytes:
-    """Download cover image bytes from a URL returned by lookup_by_isbn.
+    """Download cover image bytes from a Candidate's `cover_url`.
 
     Args:
         url: A `cover_url` value from a Candidate.
@@ -141,24 +143,21 @@ def fetch_cover(url: str) -> bytes:
 
 
 def _fetch_bytes(url: str) -> bytes:
+    # Open Library asks API clients to identify themselves.
+    request = urllib.request.Request(url, headers={"User-Agent": _user_agent()})
     try:
-        with urllib.request.urlopen(url, timeout=_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             data: bytes = response.read()
             return data
     except (urllib.error.URLError, OSError) as exc:
         raise OpenLibraryError(f"request to {url} failed: {exc}") from exc
 
 
-def _join_authors(authors: object) -> str | None:
-    if not isinstance(authors, list):
-        return None
-    names = []
-    for entry in authors:
-        if isinstance(entry, dict):
-            name = entry.get("name")
-            if name:
-                names.append(name)
-    return ", ".join(names) if names else None
+def _user_agent() -> str:
+    try:
+        return f"bookman/{version('bookman')}"
+    except PackageNotFoundError:
+        return "bookman/unknown"
 
 
 def _join_names(names: object) -> str | None:
@@ -171,14 +170,4 @@ def _join_names(names: object) -> str | None:
 def _cover_url_for_id(cover_id: object) -> str | None:
     if isinstance(cover_id, int) and cover_id > 0:
         return _COVER_BY_ID_URL.format(cover_id=cover_id)
-    return None
-
-
-def _best_cover_url(cover: object) -> str | None:
-    if not isinstance(cover, dict):
-        return None
-    for size in ("large", "medium", "small"):
-        value = cover.get(size)
-        if value:
-            return str(value)
     return None

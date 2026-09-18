@@ -13,7 +13,6 @@ from bookman.identify.openlibrary import (
 from bookman.identify.source import MetadataSourceError
 
 ISBN = "9780306406157"
-BIBKEY = f"ISBN:{ISBN}"
 
 
 class _FakeResponse:
@@ -31,11 +30,13 @@ class _FakeResponse:
 
 
 def _patch_urlopen(monkeypatch, *, returns: bytes | None = None, raises: Exception | None = None):
-    """Stub urlopen; returns a list that records every URL requested."""
+    """Stub urlopen; returns a list that records every URL requested.
+    The request headers land in the module-level `headers` list."""
     urls = []
 
-    def fake_urlopen(url, timeout=None):
-        urls.append(url)
+    def fake_urlopen(request, timeout=None):
+        urls.append(request.full_url)
+        headers.append(request.headers)
         if raises is not None:
             raise raises
         return _FakeResponse(returns)
@@ -44,27 +45,50 @@ def _patch_urlopen(monkeypatch, *, returns: bytes | None = None, raises: Excepti
     return urls
 
 
+headers: list[dict] = []
+
+
 def test_lookup_by_isbn_returns_metadata_for_known_isbn(monkeypatch):
     payload = {
-        BIBKEY: {
-            "title": "Godel, Escher, Bach",
-            "authors": [{"name": "Douglas Hofstadter"}],
-            "cover": {"small": "s.jpg", "medium": "m.jpg", "large": "l.jpg"},
-        }
+        "numFound": 1,
+        "docs": [
+            {
+                "title": "Godel, Escher, Bach",
+                "author_name": ["Douglas Hofstadter"],
+                "cover_i": 12345,
+            }
+        ],
     }
-    _patch_urlopen(monkeypatch, returns=json.dumps(payload).encode())
+    urls = _patch_urlopen(monkeypatch, returns=json.dumps(payload).encode())
 
     result = lookup_by_isbn(ISBN)
 
     assert result.title == "Godel, Escher, Bach"
     assert result.author == "Douglas Hofstadter"
-    assert result.cover_url == "l.jpg"
+    assert result.cover_url == "https://covers.openlibrary.org/b/id/12345-L.jpg"
+    assert urls[0].startswith("https://openlibrary.org/search.json?")
+    assert f"isbn={ISBN}" in urls[0]
+    assert "limit=1" in urls[0]
+
+
+def test_lookup_by_isbn_takes_the_first_doc_when_several_come_back(monkeypatch):
+    payload = {"docs": [{"title": "First"}, {"title": "Second"}]}
+    _patch_urlopen(monkeypatch, returns=json.dumps(payload).encode())
+
+    assert lookup_by_isbn(ISBN).title == "First"
 
 
 def test_lookup_by_isbn_returns_none_for_unknown_isbn(monkeypatch):
-    _patch_urlopen(monkeypatch, returns=json.dumps({}).encode())
+    _patch_urlopen(monkeypatch, returns=json.dumps({"numFound": 0, "docs": []}).encode())
 
     assert lookup_by_isbn(ISBN) is None
+
+
+def test_lookup_by_isbn_raises_open_library_error_on_wrong_shape(monkeypatch):
+    _patch_urlopen(monkeypatch, returns=json.dumps({"docs": [42]}).encode())
+
+    with pytest.raises(OpenLibraryError):
+        lookup_by_isbn(ISBN)
 
 
 def test_lookup_by_isbn_raises_open_library_error_on_http_failure(monkeypatch):
@@ -162,6 +186,15 @@ def test_search_raises_open_library_error_on_wrong_shape(monkeypatch):
 
     with pytest.raises(OpenLibraryError):
         search("Anything")
+
+
+def test_requests_identify_bookman_in_the_user_agent(monkeypatch):
+    headers.clear()
+    _patch_urlopen(monkeypatch, returns=json.dumps({"docs": []}).encode())
+
+    search("Deep Work")
+
+    assert headers[0]["User-agent"].startswith("bookman/")
 
 
 def test_open_library_error_is_a_metadata_source_error():

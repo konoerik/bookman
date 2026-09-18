@@ -90,6 +90,16 @@ def test_author_surnames_strips_accents():
     assert author_surnames("Gabriel Garcia Marquez") == {"marquez"}
 
 
+def test_author_surnames_ignores_generational_suffixes():
+    assert author_surnames("Martin Luther King Jr.") == {"king"}
+    assert author_surnames("Martin Luther King, Jr.") == {"king"}
+    assert author_surnames("King, Martin Luther, Jr.") == {"king"}
+    assert author_surnames("Robert Downey Jr. and Sammy Davis, Jr.") == {"downey", "davis"}
+    assert author_surnames("William Strunk Jr. and E. B. White") == {"strunk", "white"}
+    assert author_surnames("Strunk, William, Jr.; White, E. B.") == {"strunk", "white"}
+    assert author_surnames("Henry VIII") == {"viii"}  # a single token is never a suffix
+
+
 def test_author_surnames_ignores_placeholders():
     assert author_surnames("Anonymous") == set()
     assert author_surnames("Unknown") == set()
@@ -209,6 +219,30 @@ def test_match_basis_same_isbn_with_title_and_author_both_disagreeing_is_none():
     assert (
         match_basis("My Tax Return 2019", "Jane Doe", "Deep Work", "Cal Newport", same_isbn=True)
         is None
+    )
+
+
+def test_match_basis_same_isbn_with_title_disagreeing_and_no_author_to_vouch_is_none():
+    # ADR-19: a contradicting title with nothing to answer it is some
+    # other book's record, however the ISBN got shared.
+    assert (
+        match_basis("Deep Work", "Cal Newport", "The three voices of poetry", None, same_isbn=True)
+        is None
+    )
+    assert (
+        match_basis("Deep Work", None, "The three voices of poetry", "T. S. Eliot", same_isbn=True)
+        is None
+    )
+
+
+def test_match_basis_same_isbn_with_title_disagreeing_but_author_agreeing_is_isbn():
+    # ... unless the author vouches for it (spec row 2).
+    assert (
+        match_basis(
+            "Deep Work", "Cal Newport", "So Good They Can't Ignore You", "Cal Newport",
+            same_isbn=True,
+        )
+        == MatchBasis.ISBN
     )
 
 

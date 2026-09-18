@@ -30,8 +30,8 @@ not that is post-1.0, however cheap it looks.
 
 | Area | Rows | Why it's in |
 |---|---|---|
-| Silent-merge and mislabel gaps | F14 (needs OQ1), A10, D9 | These lose data quietly. The top of the gap summary below |
-| The core promise, pinned | F13, F16, A4, A8, F5 | ❓ rows that assert format-grouping actually works; cheap tests, and they guard every later refactor |
+| Silent-merge and mislabel gaps | F14 (needs OQ1), ~~A10~~, ~~D9~~ | These lose data quietly. The top of the gap summary below. A10 and D9 closed 2026-09-18 |
+| ~~The core promise, pinned~~ | ~~F13, F16, A4, A8, F5~~ | ✅ Done 2026-09-18 — all five pinned in `test_library`; the code was as believed |
 | ~~Book identity~~ | ~~I5~~ | ✅ Done 2026-09-18 (ADR-17). Everything in K keys off it |
 | ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18). CLI commands for them are not (N7) |
 | Single-writer assumption | M6 | Documentation only; the honest statement of a real limitation |
@@ -85,7 +85,7 @@ code already had a row:
 
 | Divergence | Step | Row | State |
 |---|---|---|---|
-| Only the first ISBN is looked up; the spec says try each in turn | IDENT-1 | A10 | ❌ open, in v1.0 scope. Marked in `resolve.py` with a `DIVERGENCE` comment |
+| ~~Only the first ISBN is looked up; the spec says try each in turn~~ | IDENT-1 | A10 | ✅ closed 2026-09-18: `resolve.identify` loops over `parsed.isbns` |
 | Authors "agree" on a shared *surname*; the spec says a shared *person* | MATCH-2 | D6 | ⚠️ accepted limitation |
 | GROUP-1 can't apply the stricter scraped-ISBN rule IDENT-3 applies | GROUP-1 | B6 residual | ⚠️ accepted, blocked on I12 (spec OQ2) |
 
@@ -117,13 +117,13 @@ What the file says about itself: title (T), author (A), ISBN (I).
 | A1 | IDENT-1..3 | T + A + I, all correct | ISBN lookup accepted → `identified=isbn`, cover | ✅ | `test_resolve::accepts_isbn_hit_that_agrees_on_title`, `test_library::sets_identified_on_agreeing_isbn_lookup` |
 | A2 | IDENT-4,5 | T + A, no I | Title/author search → `identified=title_author` | ✅ 🟢 | `test_resolve::searches_by_title_and_author_without_isbn`; live: Alice (Gutenberg) |
 | A3 | IDENT-4,5; MATCH-3 | T only | Search; accept only an *identical* normalized title → `identified=title_only`, `needs_review` | ✅ 🟢 | `test_resolve::search_without_file_author_requires_identical_title`; live: Lazarillo |
-| A4 | IDENT-4 | A only (no T, no I) | No lookup; title falls back to the filename stem; `identified=None` | ❓ | `test_resolve::does_nothing_without_title_or_isbn` covers identify; the `path.stem` fallback in `Library.import_file` is untested |
+| A4 | IDENT-4 | A only (no T, no I) | No lookup; title falls back to the filename stem; `identified=None` | ✅ | `test_resolve::does_nothing_without_title_or_isbn`, `test_library::falls_back_to_filename_stem_when_file_has_only_an_author` (no source call, stem names the folder) |
 | A5 | IDENT-2,3; MATCH-1 | I only | ISBN lookup; record supplies title and author → `identified=isbn` | ✅ | `test_resolve::uses_record_title_only_when_file_has_none`, `test_match::same_isbn_with_missing_fields_is_isbn` |
 | A6 | IDENT-3,6 | T + I, no A | ISBN lookup; record supplies author | ✅ | `test_resolve::accepts_isbn_hit_that_agrees_on_title` (file has `author=None`) |
 | A7 | IDENT-6; MATCH-1 | A + I, no T | ISBN lookup; record supplies title | ✅ | same as A5 |
-| A8 | IDENT-4 | Nothing (no T, A, I) | Folder named after filename stem, `needs_review` | ❓ | untested (same fallback as A4) |
+| A8 | IDENT-4 | Nothing (no T, A, I) | Folder named after filename stem, `needs_review` | ✅ | `test_library::with_no_metadata_at_all_is_shelved_under_its_stem_for_review` |
 | A9 | MATCH-2 | Placeholder author ("Anonymous", "Unknown", "Various") | Treated as no author → A3 path | ✅ 🟢 | `test_match::author_surnames_ignores_placeholders`; live: Lazarillo keeps "Anonymous" |
-| A10 | IDENT-1 | Several ISBNs in one file (print + ebook, or a cited list) | Try each until one agrees | ❌ | Only `isbns[0]` is looked up (`resolve.identify`); if it is unknown to OL the rest are never tried |
+| A10 | IDENT-1 | Several ISBNs in one file (print + ebook, or a cited list) | Try each until one agrees; a rejected one is dropped, the first unknown one is kept | ✅ | `test_resolve::tries_the_next_isbn_when_the_first_is_unknown`, `..._when_the_first_is_rejected`, `stops_at_the_first_accepted_isbn`, `keeps_the_first_unknown_isbn_when_none_is_accepted`, `drops_a_rejected_isbn_but_keeps_an_unknown_one`, `keeps_no_isbn_when_every_one_is_rejected`, `moves_on_to_the_next_isbn_when_a_lookup_fails` |
 | A11 | MATCH-0 | Title is whitespace/empty string | Treated as missing (A4/A8) | ❓ | `pdf._clean` strips; EPUB path unverified |
 | A12 | MATCH-0,3 | Generic junk title ("Untitled", "Microsoft Word - final.docx", "Book") with no author | No match; `needs_review` | ✅ | Two tiers. **Placeholder** ("Untitled", "Untitled Document 2", "No Title", converter stamps like "Microsoft Word - x.docx"): `normalize_title` returns "", so it counts as no title — it cannot match at all and is not searched for. **Generic** ("Book", "Final Draft", "New Document"): survives normalization, so it is still searched, but `match_basis` refuses it on the TITLE_ONLY path — it only reaches TITLE_AUTHOR, where an agreeing author does the work. Neither tier vetoes an ISBN, the same as a missing title. Keeps a real title like Alan Watts' "The Book" identifiable. Tests: `test_match::normalize_title_of_a_placeholder_is_empty`, `a_generic_title_survives_normalization_but_is_flagged`, `normalize_title_keeps_a_real_title_containing_a_junk_word`, `match_basis_two_placeholder_titles_do_not_match`, `match_basis_two_generic_titles_do_not_match_without_an_author`, `match_basis_generic_title_still_matches_when_the_author_agrees`, `match_basis_junk_title_does_not_veto_an_isbn`; `test_library::keeps_placeholder_titled_files_as_separate_books`, `keeps_generic_titled_files_as_separate_books`, `groups_generic_titled_files_when_the_author_agrees`; `test_resolve::does_not_search_on_a_placeholder_title`, `searches_a_generic_title_and_lets_the_author_settle_it` |
 | A13 | MATCH-2 | PDF `/Author` is a publisher or tool ("Manning Publications", "Adobe InDesign") | Author disagrees → no match, `needs_review`; author string stored as-is | ❓ | Safe direction (`match_basis` → None) but the bogus author is kept and shown; untested |
@@ -145,6 +145,7 @@ What the file says about itself: title (T), author (A), ISBN (I).
 | B8 | — (parse) | ISBN appears after page 5 of a PDF | Not found | ⚠️ | `test_pdf::ignores_isbn_beyond_scan_page_limit` (pinned as the limit) |
 | B9 | — (parse) | Scanned/image PDF (no extractable text) | No ISBN; title/author from info dict only | ❓ | Follows from `extract_text() or ""`; untested |
 | B10 | GROUP-1 | Same false ISBN in two unrelated files, OL has no record for it | Not grouped | ✅ | `test_library::does_not_group_by_isbn_when_title_and_author_both_disagree` — `_find_book` applies `match_basis(same_isbn=True)` like identify does (same both-must-disagree guard, so B6 still applies to grouping) |
+| B11 | MATCH-1; IDENT-3 | Asserted ISBN whose record contradicts the **title** and has **no author** to answer for it (live: `9780000000002` → "The three voices of poetry", no author, on a "Deep Work" file) | Rejected, ISBN dropped, fall through to search | ✅ 🟢 | `test_match::same_isbn_with_title_disagreeing_and_no_author_to_vouch_is_none`, spec row 21 (ADR-19). Before ADR-19 this was accepted with `needs_review=False` — a missing author could not "disagree" |
 
 ## C. Title shape
 
@@ -184,7 +185,7 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | D6 | MATCH-2 | Different people, same surname ("Frank Herbert" / "Brian Herbert") | Disagree | ⚠️ | Pinned as a known limitation in `test_match::match_basis_shared_surname_counts_as_agreement` |
 | D7 | MATCH-2 | One side lists a subset of co-authors | Agree (share one surname) | ✅ | Falls out of D1; no dedicated test |
 | D8 | MATCH-2 | Placeholder names | No evidence | ✅ | see A9 |
-| D9 | MATCH-2 | Suffix without comma ("Martin Luther King Jr.") | Surname "king" | ❌ | Verified in-session → `{'jr'}`; "Downey, Jr." with a comma works |
+| D9 | MATCH-2 | Generational suffix, with or without a comma ("Martin Luther King Jr.", "King, Martin Luther, Jr.") | Surname "king" | ✅ | `test_match::author_surnames_ignores_generational_suffixes` — Jr/Sr/II/III/IV dropped from the end of a name, and a suffix set off by its own comma is not read as a person. Closed 2026-09-18 |
 | D10 | MATCH-2 | Single-name author ("Homer", "Plato") | Surname is the name | ❓ | Works by construction; untested |
 | D11 | MATCH-2 | Surname-first cultures / non-Latin scripts ("村上 春樹" vs OL "Haruki Murakami") | Agree | ❌ | Last token is taken as surname on both sides; script mismatch and name order both defeat it |
 | D12 | MATCH-2 | Publisher/tool as author | See A13 | ❓ | |
@@ -216,7 +217,7 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | F2 | GROUP-1 | Second format, same ISBN | `grouped=isbn` | ✅ | `test_library::adds_second_format_to_existing_book_by_isbn_match` |
 | F3 | GROUP-2 | Second format, title + author agree, no ISBN | `grouped=title_author` | ✅ | `test_library::groups_second_format_by_title_and_author` |
 | F4 | GROUP-2 | Second format, author missing on one side | `grouped=title_only`, `needs_review` | ✅ | C16 |
-| F5 | GROUP-1 | ISBN match and a title/author match point at different folders | ISBN wins | ❓ | Ordered that way in `_find_book`; untested |
+| F5 | GROUP-1 | ISBN match and a title/author match point at different folders | ISBN wins | ✅ | `test_library::isbn_join_beats_a_title_author_join_to_a_different_book` — asserted ISBN; the agreeing author is what carries it past the title mismatch (row 2), so for a *scraped* ISBN the title/author folder would win instead (ADR-14) |
 | F6 | GROUP-2 | Two existing books both `title_only`-match | First in sorted folder order | ⚠️ | Arbitrary; only arises from junk titles (A12) |
 | F7 | GROUP-4 | Follow-up format identified more strongly | Identification upgraded, cover fetched | ✅ | `test_library::upgrades_identification_on_follow_up_format` |
 | F8 | GROUP-4 | Follow-up format identified more weakly or lookup fails | Nothing downgraded | ✅ | `test_library::does_not_downgrade_identification_on_lookup_failure`, `…does_not_replace_strong_identification_with_weaker` (ADR-5) |
@@ -224,10 +225,10 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | F10 | GROUP-4 | Weakest grouping basis remembered across joins | `grouped` never strengthens | ✅ | `test_library::records_weakest_grouping_basis` |
 | F11 | GROUP-4 | Reviewed book, new format | Metadata untouched | ✅ | `test_library::does_not_overwrite_reviewed_book_metadata` |
 | F12 | GROUP-4 | Reviewed book, `title_only` join | `reviewed` cleared | ✅ | `test_library::clears_reviewed_on_title_only_join` |
-| F13 | GROUP-4 | Re-import of the same file (same format kind) | Idempotent: one format entry, file replaced | ❓ | Mechanism in `import_file` (drop same-kind formats, append); only the legacy-rename case is tested |
+| F13 | GROUP-4 | Re-import of the same file (same format kind) | Idempotent: one format entry, file replaced | ✅ | `test_library::reimport_of_the_same_file_is_idempotent` (same `Book.id`, one entry, bytes replaced, one book in the library); legacy rename in `replaces_legacy_book_named_format_file` |
 | F14 | GROUP-4 (OQ1) | Same format kind, different file, same book (two EPUB editions) | Undecided | ❌ | Second silently **overwrites** the first's `.epub`; there is no "already have this format" signal in `Book` or `ImportBatchResult` |
 | F15 | MATCH-2 | Multi-volume set (C17) | Separate books | ✅ | `test_library::keeps_volumes_of_a_set_as_separate_books` |
-| F16 | GROUP-4 | Order independence: `{epub without ISBN, pdf with ISBN}` imported in either order | Same end state | ❓ | Both orders reason through F3/F7; not pinned |
+| F16 | GROUP-4 | Order independence: `{epub without ISBN, pdf with ISBN}` imported in either order | Same end state | ✅ | `test_library::import_order_does_not_change_the_end_state` — title, author, ISBN, `identified`, `grouped`, `needs_review` and format set all equal |
 
 ## G. Placement on disk
 
@@ -288,15 +289,18 @@ leave a book unidentified, because the latter are already surfaced by
    two tiers: a placeholder title ("Untitled") normalizes to "" and so
    counts as no title, while a merely generic one ("Book") is barred
    from TITLE_ONLY but can still be corroborated by an author.
-6. **A10 — only the first ISBN is tried.**
-7. **D9 — "Jr."/"Sr."/"III" become the surname.**
+6. ~~**A10 — only the first ISBN is tried.**~~ Closed: `identify` walks
+   every ISBN, dropping rejected ones and keeping the first unknown one.
+7. ~~**D9 — "Jr."/"Sr."/"III" become the surname.**~~ Closed: suffixes are
+   dropped before the surname is taken.
 8. **C10, H11, A15, A16, D11** — books left unidentified for
    want of a heuristic (series prefix, filename, EPUB roles, XMP,
    name order). Each is a cover we don't fetch, not a wrong merge.
 
 Unverified rows (❓) are cheap tests to add — the code is believed
-right, and pinning them is what makes the next refactor safe: A4/A8,
-F5, F13, F16, G8, H9 are the ones most likely to matter.
+right, and pinning them is what makes the next refactor safe. A4/A8,
+F5, F13 and F16 were pinned 2026-09-18 (the code was right); G8 and H9
+remain.
 
 ---
 
