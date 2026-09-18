@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from helpers import FakeSource
+from helpers import VALID_ISBN13, FakeSource
 from helpers import make_epub as _make_epub
 from helpers import make_pdf as _make_pdf
 
@@ -449,3 +449,237 @@ def test_import_directory_summary_omits_skipped_when_none(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "1 imported, 0 failed" in out
     assert "skipped" not in out
+
+
+# --- K1-K3 from the command line (N7) -----------------------------------
+
+
+def _one_book(tmp_path, **kwargs):
+    """A library holding a single unreviewed, unidentified book; returns
+    (root, book)."""
+    library_root = tmp_path / "Library"
+    library = Library(library_root)
+    kwargs.setdefault("title", "Deep Work")
+    kwargs.setdefault("author", "Cal Newport")
+    book = library.import_file(_make_epub(tmp_path / "a.epub", **kwargs))
+    return library_root, book
+
+
+def test_review_marks_the_book_and_takes_it_off_the_queue(tmp_path, capsys):
+    library_root, book = _one_book(tmp_path)
+    assert book.needs_review
+
+    code = cli.main(["-l", str(library_root), "review", "Deep Work"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.startswith("reviewed: Deep Work - Cal Newport (epub)")
+    assert "NEEDS REVIEW" not in out
+    (saved,) = Library(library_root).scan()
+    assert saved.reviewed and not saved.needs_review
+
+
+def test_review_undo_puts_it_back(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+    cli.main(["-l", str(library_root), "review", "Deep Work"])
+    capsys.readouterr()
+
+    code = cli.main(["-l", str(library_root), "review", "Deep Work", "--undo"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.startswith("unreviewed: Deep Work")
+    assert "NEEDS REVIEW" in out
+    assert not Library(library_root).scan()[0].reviewed
+
+
+def test_book_can_be_named_by_id(tmp_path, capsys):
+    library_root, book = _one_book(tmp_path)
+
+    code = cli.main(["-l", str(library_root), "review", book.id])
+
+    assert code == 0
+    assert Library(library_root).scan()[0].reviewed
+
+
+def test_book_can_be_named_by_title_when_it_differs_from_the_folder(tmp_path, capsys):
+    library_root, book = _one_book(tmp_path, title="Deep Work: Rules")
+    assert book.directory is not None and book.directory.name == "Deep Work - Rules"
+
+    code = cli.main(["-l", str(library_root), "review", "Deep Work: Rules"])
+
+    assert code == 0
+    assert Library(library_root).scan()[0].reviewed
+
+
+def test_shared_title_is_ambiguous_and_lists_the_folders(tmp_path, capsys):
+    library_root = tmp_path / "Library"
+    library = Library(library_root)
+    library.import_file(_make_epub(tmp_path / "a.epub", title="Dune", author="Frank Herbert"))
+    library.import_file(_make_epub(tmp_path / "b.epub", title="Dune", author="Ada Lovelace"))
+    assert {b.directory.name for b in library.scan()} == {"Dune", "Dune (2)"}
+
+    # "Dune" is also a folder name, so it selects that book outright ...
+    assert cli.main(["-l", str(library_root), "review", "Dune"]) == 0
+    capsys.readouterr()
+    # ... whereas a title that is *only* a title, and shared, is refused.
+    cli.main(["-l", str(library_root), "edit", "Dune (2)", "--title", "Dune:"])
+    cli.main(["-l", str(library_root), "edit", "Dune", "--title", "Dune:"])
+    capsys.readouterr()
+
+    code = cli.main(["-l", str(library_root), "review", "Dune:"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "2 books are titled 'Dune:'" in err
+    assert "Dune" in err and "Dune (2)" in err
+
+
+def test_unknown_book_is_an_error_with_a_hint(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+
+    code = cli.main(["-l", str(library_root), "review", "Deep Wrk"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "no book named 'Deep Wrk'" in err
+    assert "bookman list" in err
+    assert not Library(library_root).scan()[0].reviewed
+
+
+def test_curation_commands_on_missing_library_do_not_create_it(tmp_path, capsys):
+    missing = tmp_path / "nope"
+
+    for argv in (
+        ["review", "X"],
+        ["edit", "X", "--title", "Y"],
+        ["reidentify", "X"],
+    ):
+        assert cli.main(["-l", str(missing), *argv]) == 1
+        assert "library not found" in capsys.readouterr().err
+    assert not missing.exists()
+
+
+def test_edit_changes_named_fields_and_marks_reviewed(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path, author="Adobe InDesign")
+
+    code = cli.main(
+        [
+            "-l",
+            str(library_root),
+            "edit",
+            "Deep Work",
+            "--author",
+            "Cal Newport",
+            "--isbn",
+            "0-306-40615-2",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.startswith("edited: Deep Work - Cal Newport (epub)")
+    assert "moved to" not in out
+    (saved,) = Library(library_root).scan()
+    assert saved.author == "Cal Newport"
+    assert saved.isbn == VALID_ISBN13
+    assert saved.reviewed
+
+
+def test_edit_can_clear_author_and_isbn(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+    cli.main(["-l", str(library_root), "edit", "Deep Work", "--isbn", VALID_ISBN13])
+    assert Library(library_root).scan()[0].isbn == VALID_ISBN13
+    capsys.readouterr()
+
+    code = cli.main(["-l", str(library_root), "edit", "Deep Work", "--no-author", "--no-isbn"])
+
+    assert code == 0
+    (saved,) = Library(library_root).scan()
+    assert saved.author is None
+    assert saved.isbn is None
+    assert "unknown author" in capsys.readouterr().out
+
+
+def test_edit_title_renames_the_folder_and_says_so(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+
+    code = cli.main(["-l", str(library_root), "edit", "Deep Work", "-t", "Deep Work: Rules"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "moved to: Deep Work - Rules" in out
+    assert (library_root / "Deep Work - Rules" / "Deep Work - Rules.epub").exists()
+    assert not (library_root / "Deep Work").exists()
+    # And the new name is what selects it from now on.
+    assert cli.main(["-l", str(library_root), "review", "Deep Work - Rules"]) == 0
+
+
+def test_edit_rejects_an_invalid_isbn(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+
+    code = cli.main(["-l", str(library_root), "edit", "Deep Work", "--isbn", "123"])
+
+    assert code == 1
+    assert "not a valid ISBN" in capsys.readouterr().err
+    assert Library(library_root).scan()[0].isbn is None
+
+
+def test_edit_with_nothing_to_change_is_a_usage_error(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+
+    code = cli.main(["-l", str(library_root), "edit", "Deep Work"])
+
+    assert code == 2
+    assert "nothing to change" in capsys.readouterr().err
+    assert not Library(library_root).scan()[0].reviewed
+
+
+def test_edit_refuses_author_and_no_author_together(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["-l", str(library_root), "edit", "Deep Work", "-a", "X", "--no-author"])
+
+    assert exc.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_reidentify_applies_a_hit_and_reports_the_cover(tmp_path, monkeypatch, capsys):
+    library_root, book = _one_book(tmp_path, author=None)
+    assert book.author is None and book.cover_path is None
+    hit = Candidate(title="Deep Work", author="Cal Newport", cover_url="http://x/c.jpg")
+    monkeypatch.setattr(
+        "bookman.library.OpenLibrarySource",
+        lambda: FakeSource(results=[hit], cover=b"\x89PNG"),
+    )
+
+    code = cli.main(["-l", str(library_root), "reidentify", "Deep Work"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.startswith("re-identified: Deep Work - Cal Newport (epub)")
+    assert "[cover]" in out
+    (saved,) = Library(library_root).scan()
+    assert saved.author == "Cal Newport"
+    assert saved.cover_path is not None
+
+
+def test_reidentify_that_finds_nothing_is_not_an_error(tmp_path, capsys):
+    library_root, _ = _one_book(tmp_path)
+
+    code = cli.main(["-l", str(library_root), "reidentify", "Deep Work"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "[no cover]" in out
+    assert "NEEDS REVIEW: no online match" in out
+
+
+def test_help_lists_the_curation_commands(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+
+    out = capsys.readouterr().out
+    for name in ("review", "edit", "reidentify"):
+        assert name in out

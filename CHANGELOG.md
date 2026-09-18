@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   keeps everything a human set and gains only a cover it was missing,
   which is the way to get a cover for a book Open Library could not match
   on its own.
+- CLI commands for the above: `bookman review BOOK [--undo]`,
+  `bookman edit BOOK [--title T] [--author A | --no-author]
+  [--isbn I | --no-isbn]` and `bookman reidentify BOOK`. BOOK is the
+  title as `list` prints it, the book's folder name, or its id; a title
+  shared by several books is refused with their folder names listed.
 - `Book.id` — a stable identity minted once per book and stored in
   `metadata.json`, which moves to schema version 3. Unlike `Book.directory`
   it survives a rename of the book's folder, so a frontend can hold a

@@ -33,7 +33,7 @@ not that is post-1.0, however cheap it looks.
 | Silent-merge and mislabel gaps | F14 (needs OQ1), ~~A10~~, ~~D9~~ | These lose data quietly. The top of the gap summary below. A10 and D9 closed 2026-09-18 |
 | ~~The core promise, pinned~~ | ~~F13, F16, A4, A8, F5~~ | ✅ Done 2026-09-18 — all five pinned in `test_library`; the code was as believed |
 | ~~Book identity~~ | ~~I5~~ | ✅ Done 2026-09-18 (ADR-17). Everything in K keys off it |
-| ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18). CLI commands for them are not (N7) |
+| ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18), CLI commands the same day (ADR-20) |
 | Single-writer assumption | M6 | Documentation only; the honest statement of a real limitation |
 | Open decisions | OQ1 (F14), OQ3 (C7) | Both block behavior that is in scope |
 
@@ -366,9 +366,9 @@ built yet: the review flag exists, the way to act on it doesn't.
 
 | ID | Operation | Why | Status | Public API / notes |
 |---|---|---|---|---|
-| K1 | Mark reviewed / unreviewed | Clear the review queue | ✅ | `Library.mark_reviewed(book, reviewed=True)` (ADR-18) |
-| K2 | Edit title / author / ISBN | Fix a wrong or unidentified book | ✅ | `Library.edit(book, *, title=, author=, isbn=)` (ADR-18). Renames the folder and its format files, revalidates and normalizes the ISBN, and **sets `reviewed`** — decided: without it the edit is silently overwritten by the next format import. Author and ISBN can be cleared by passing None; omitted fields are untouched |
-| K3 | Re-identify: retry the lookup for one book | After fixing a title, or when OL improves | ✅ | `Library.reidentify(book)` (ADR-18). Always runs; a reviewed book keeps its human-set fields and gains only a missing cover and empty fields — the E12 route. Never renames, since the book's own title always wins (ADR-10) |
+| K1 | Mark reviewed / unreviewed | Clear the review queue | ✅ | `Library.mark_reviewed(book, reviewed=True)` (ADR-18); `bookman review BOOK [--undo]` |
+| K2 | Edit title / author / ISBN | Fix a wrong or unidentified book | ✅ | `Library.edit(book, *, title=, author=, isbn=)` (ADR-18). Renames the folder and its format files, revalidates and normalizes the ISBN, and **sets `reviewed`** — decided: without it the edit is silently overwritten by the next format import. Author and ISBN can be cleared by passing None; omitted fields are untouched. `bookman edit BOOK --title/--author/--no-author/--isbn/--no-isbn` |
+| K3 | Re-identify: retry the lookup for one book | After fixing a title, or when OL improves | ✅ | `Library.reidentify(book)` (ADR-18). Always runs; a reviewed book keeps its human-set fields and gains only a missing cover and empty fields — the E12 route. Never renames, since the book's own title always wins (ADR-10). `bookman reidentify BOOK` |
 | K4 | Supply / replace / remove a cover (file or URL) | Only route to a cover for E12 cases | ❌ | Backlog; needs I3 to accept a user-supplied image |
 | K5 | Choose among lookup candidates | "Which of these is it?" in the TUI, instead of auto-pick | ❌ 💬 | `identify` returns one answer; a `candidates(parsed) -> list[…]` API plus `apply(book, candidate)` would let a frontend disambiguate B6/C7/D6-style cases. Changes the ADR-4 stance from "auto with flag" to "auto with flag, override available" |
 | K6 | Merge two books | Undo a false split (C10, D11) | ❌ | Formats move to one folder; conflicting same-kind formats hit F14 |
@@ -416,7 +416,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | N4 | Network configuration: timeouts, user-agent, endpoint override, disable | Tests, rate limits, mirrors | ❌ | Hard-coded in `identify.openlibrary` |
 | N5 | Logging instead of silence | Frontend can show "lookup failed: timeout" | ❌ | Failures are swallowed into "no match"; no `logging` calls |
 | N6 | Thread-safety statement | TUI will run imports off the UI thread | ❌ | Undocumented; relates to M6 |
-| N7 | CLI parity with the public API | CLI stays a thin wrapper (ADR-6) | 🔶 | `init`, `config`, `import`, `list`, `search`. K1–K3 landed without CLI commands (ADR-18), so there is now a real gap: `review`, `set` and `reidentify` are reachable from the library but not the CLI |
+| N7 | CLI parity with the public API | CLI stays a thin wrapper (ADR-6) | ✅ | `init`, `config`, `import`, `list`, `search`, and since 2026-09-18 `review [--undo]`, `edit --title/--author/--no-author/--isbn/--no-isbn` and `reidentify` for K1–K3. A book is named by its title as `list` prints it, its folder name, or its `Book.id` (ADR-20) |
 | N8 | Second metadata source (Google Books, …) behind one interface | E12-class gaps; resilience to OL outages | ❌ 💬 | CONTEXT names it as the future fix; needs a provider abstraction ADR |
 
 ## Reading the two parts together
@@ -435,7 +435,6 @@ matching heuristics:
 The first Part II slice that unblocks the TUI — **I5** (stable id),
 **K1** (set reviewed), **K2** (edit fields), **K3** (re-identify) and
 **L2/L10** (export what's already there) — is complete as of
-2026-09-18. What it exposed: the review queue is now actionable from
-the library but not from the CLI (N7), and the first operation that
-rewrites a book's layout on disk made M2/M3 (verify/repair) matter for
-the first time.
+2026-09-18, with CLI commands for K1–K3 (N7) landing the same day.
+What it exposed: the first operation that rewrites a book's layout on
+disk made M2/M3 (verify/repair) matter for the first time.

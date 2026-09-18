@@ -22,14 +22,15 @@ from bookman.config import (
     resolve_library,
     save_config,
 )
-from bookman.errors import LibraryNotConfiguredError, UnsupportedFormatError
+from bookman.errors import CatalogError, LibraryNotConfiguredError, UnsupportedFormatError
 from bookman.formats import is_supported, supported_suffixes
-from bookman.library import ImportBatchResult, Library
+from bookman.library import _UNSET, ImportBatchResult, Library, _Unset
 from bookman.models import Book, MatchBasis
 
 _SUPPORTED = ", ".join(supported_suffixes())
 _RULE_WIDTH = 60
 _LIBRARY_HELP = f"library root directory (default: ${ENV_LIBRARY}, then the saved config)"
+_BOOK_HELP = "the book's title as `list` shows it, its folder name, or its id"
 
 _DESCRIPTION = """\
 bookman - a local ebook library manager.
@@ -56,6 +57,15 @@ examples:
 
   bookman search "newport"
       find books whose title or author contains "newport"
+
+  bookman review "Deep Work"
+      mark that book checked, taking it off the review list
+
+  bookman edit "Deep Work" --author "Cal Newport" --no-isbn
+      fix the author and drop a wrong ISBN (this marks it reviewed)
+
+  bookman reidentify "Deep Work"
+      look the book up again, e.g. for a cover after fixing its title
 
   bookman config
       show which library is in use and where that setting is stored
@@ -86,8 +96,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Process exit code: 0 on full success. `import` returns 1 if
         any file in the batch failed (partial success still imports
-        and reports the rest). `list` and `search` return 1 if the
-        library root doesn't exist. Any command that needs a library
+        and reports the rest). `list`, `search`, `review`, `edit` and
+        `reidentify` return 1 if the library root doesn't exist; the
+        last three also return 1 if no book has the given name or id,
+        and `edit` returns 1 for a blank title or an invalid ISBN.
+        Any command that needs a library
         returns 1 if none is configured (see `config.resolve_library`)
         or the config file is malformed. Invoking with no command
         prints the help and returns 0. Bad arguments exit 2 via
@@ -123,6 +136,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_list(root, needs_review_only=args.needs_review)
         if args.command == "search":
             return _cmd_search(root, args.query)
+        if args.command == "review":
+            return _cmd_review(root, args.book, reviewed=not args.undo)
+        if args.command == "edit":
+            return _cmd_edit(
+                root,
+                args.book,
+                title=args.title,
+                author=_field_change(args.author, clear=args.no_author),
+                isbn=_field_change(args.isbn, clear=args.no_isbn),
+            )
+        if args.command == "reidentify":
+            return _cmd_reidentify(root, args.book)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
@@ -131,7 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the top-level parser with `--library` and the
-    init/import/list/search/config subcommands.
+    init/import/list/search/review/edit/reidentify/config subcommands.
 
     `--library/-l` (default: None, meaning "resolve via config") is
     accepted both before and after the subcommand, so
@@ -223,6 +248,60 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Find books whose title or author contains QUERY (case-insensitive).",
     )
     search_parser.add_argument("query", help="text to look for in titles and authors")
+
+    review_parser = subparsers.add_parser(
+        "review",
+        parents=[sub_common],
+        help="mark a book as checked by hand, or un-mark it with --undo",
+        description=(
+            "Record that you have checked BOOK's title, author and ISBN. A reviewed "
+            "book leaves the `list --needs-review` queue and keeps its fields through "
+            "any later import. --undo puts it back in the queue."
+        ),
+    )
+    review_parser.add_argument("book", help=_BOOK_HELP)
+    review_parser.add_argument(
+        "--undo",
+        action="store_true",
+        help="un-mark the book, putting it back in the review queue",
+    )
+
+    edit_parser = subparsers.add_parser(
+        "edit",
+        parents=[sub_common],
+        help="correct a book's title, author or ISBN by hand",
+        description=(
+            "Change BOOK's title, author and/or ISBN. Fields you don't name are left "
+            "alone. Editing marks the book reviewed, so the correction survives later "
+            "imports; `review --undo` puts it back in the queue. A new title renames "
+            "the book's folder and files."
+        ),
+    )
+    edit_parser.add_argument("book", help=_BOOK_HELP)
+    edit_parser.add_argument(
+        "--title", "-t", metavar="TITLE", help="new title (renames the folder)"
+    )
+    author_group = edit_parser.add_mutually_exclusive_group()
+    author_group.add_argument("--author", "-a", metavar="AUTHOR", help="new author")
+    author_group.add_argument("--no-author", action="store_true", help="clear the author")
+    isbn_group = edit_parser.add_mutually_exclusive_group()
+    isbn_group.add_argument(
+        "--isbn", "-i", metavar="ISBN", help="new ISBN-10 or ISBN-13 (stored as ISBN-13)"
+    )
+    isbn_group.add_argument("--no-isbn", action="store_true", help="clear the ISBN")
+
+    reidentify_parser = subparsers.add_parser(
+        "reidentify",
+        parents=[sub_common],
+        help="look a book up online again",
+        description=(
+            "Look BOOK up again and apply what comes back -- the way to get a cover, "
+            "author or ISBN after fixing a title by hand, or when the original import "
+            "found nothing. A reviewed book keeps every field you set and gains only "
+            "what it lacked. The title is never changed."
+        ),
+    )
+    reidentify_parser.add_argument("book", help=_BOOK_HELP)
 
     subparsers.add_parser(
         "config",
@@ -400,6 +479,148 @@ def _cmd_search(root: Path, query: str) -> int:
     for book in books:
         print(_format_book(book))
     return 0
+
+
+def _cmd_review(root: Path, ref: str, *, reviewed: bool) -> int:
+    """Run `review`: `Library.mark_reviewed` on the book `ref` names,
+    then print its new state via `_format_book`.
+
+    Args:
+        root: Library root, as resolved from `--library`.
+        ref: The book's folder name or id, as given on the command line.
+        reviewed: False when `--undo` was passed.
+
+    Returns:
+        0 on success, 1 if the library root doesn't exist or no book
+        matches `ref`.
+    """
+    if not _require_library(root):
+        return 1
+    library = Library(root)
+    book = _find_book(library, ref)
+    if book is None:
+        return 1
+    library.mark_reviewed(book, reviewed)
+    print(f"{'reviewed' if reviewed else 'unreviewed'}: {_format_book(book)}")
+    return 0
+
+
+def _cmd_edit(
+    root: Path,
+    ref: str,
+    *,
+    title: str | None,
+    author: str | None | _Unset,
+    isbn: str | None | _Unset,
+) -> int:
+    """Run `edit`: `Library.edit` on the book `ref` names, then print
+    its new state via `_format_book`, plus the new folder if the title
+    change moved it.
+
+    Args:
+        root: Library root, as resolved from `--library`.
+        ref: The book's folder name or id, as given on the command line.
+        title: `--title`, or None to leave the title alone.
+        author: `--author`'s value, None for `--no-author`, or `_UNSET`
+            when neither was passed. Forwarded as-is to `Library.edit`.
+        isbn: Likewise for `--isbn` / `--no-isbn`.
+
+    Returns:
+        0 on success; 1 if the library root doesn't exist, no book
+        matches `ref`, or `Library.edit` rejects the input (blank
+        title, invalid ISBN). Exit 2 via argparse if no field was
+        given at all -- the command would otherwise only set `reviewed`,
+        which is `review`'s job.
+    """
+    if title is None and isinstance(author, _Unset) and isinstance(isbn, _Unset):
+        _error("nothing to change: pass --title, --author/--no-author or --isbn/--no-isbn")
+        return 2
+    if not _require_library(root):
+        return 1
+    library = Library(root)
+    book = _find_book(library, ref)
+    if book is None:
+        return 1
+    before = book.directory
+    try:
+        library.edit(book, title=_UNSET if title is None else title, author=author, isbn=isbn)
+    except CatalogError as exc:
+        _error(str(exc))
+        return 1
+    print(f"edited: {_format_book(book)}")
+    if book.directory != before and book.directory is not None:
+        print(f"moved to: {book.directory.name}")
+    return 0
+
+
+def _cmd_reidentify(root: Path, ref: str) -> int:
+    """Run `reidentify`: `Library.reidentify` on the book `ref` names,
+    then print its new state via `_format_book` and whether a cover
+    is now present.
+
+    Args:
+        root: Library root, as resolved from `--library`.
+        ref: The book's folder name or id, as given on the command line.
+
+    Returns:
+        0 on success (a lookup that finds nothing is not an error --
+        the book is simply unchanged), 1 if the library root doesn't
+        exist or no book matches `ref`.
+    """
+    if not _require_library(root):
+        return 1
+    library = Library(root)
+    book = _find_book(library, ref)
+    if book is None:
+        return 1
+    library.reidentify(book)
+    cover = "cover" if book.cover_path else "no cover"
+    print(f"re-identified: {_format_book(book)} [{cover}]")
+    return 0
+
+
+def _find_book(library: Library, ref: str) -> Book | None:
+    """The cataloged book `ref` names, or None after reporting why not.
+
+    Tried in order: the folder name (what's on disk), then `Book.id`
+    (for scripts), then the exact title (what `list` prints -- it
+    differs from the folder when the title held a colon or another
+    character folders can't). A title shared by several books is
+    reported as ambiguous, naming their folders, since those are
+    unique. Folder name and id come first so a book can always be
+    named unambiguously even when its title is shared.
+    """
+    books = library.scan()
+    for book in books:
+        if book.directory is not None and book.directory.name == ref:
+            return book
+    for book in books:
+        if book.id == ref:
+            return book
+    by_title = [book for book in books if book.title == ref]
+    if len(by_title) == 1:
+        return by_title[0]
+    if by_title:
+        _error(f"{len(by_title)} books are titled {ref!r}; name one by its folder:")
+        for book in by_title:
+            print(f"  {book.directory.name if book.directory else '?'}", file=sys.stderr)
+        return None
+    _error(f"no book named {ref!r}")
+    print("(run `bookman list` to see the names; `bookman search` to find one)", file=sys.stderr)
+    return None
+
+
+def _field_change(value: str | None, *, clear: bool) -> str | None | _Unset:
+    """Turn an `edit` field's pair of flags into what `Library.edit`
+    expects: the new value, None to clear it, or `_UNSET` if neither
+    flag was given. argparse's mutually-exclusive group guarantees
+    `value` and `clear` aren't both set.
+    """
+    if clear:
+        return None
+    if value is not None:
+        return value
+    return _UNSET
 
 
 def _require_library(root: Path) -> bool:
