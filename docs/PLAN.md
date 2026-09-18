@@ -5,9 +5,8 @@
      If it grows beyond that, move lower-priority items to Backlog. -->
 
 Remaining v1.0 work (FEATURES *v1.0 scope*): none unblocked. Every
-item left is a decision (below).
+item left is a decision:
 
-Decisions needed (they block behavior, not the list above):
 - **File's author stands on a corroborated match** (IDENT-6): on a
   TITLE_AUTHOR/ISBN match the record's author *replaces* the file's, and
   Open Library returns *work*-level `author_name`, which is the union
