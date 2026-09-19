@@ -49,7 +49,8 @@ user-config directory; `$BOOKMAN_CONFIG` points it elsewhere).
 
 Every book is one folder named after its title, holding all of its format
 files, a cover, and a `metadata.json` sidecar. There is no author-level
-nesting, and the folder is the book's identity. `metadata.json` records not
+nesting; the folder is the book's display name, and `metadata.json` carries
+a stable `id` that survives a rename. `metadata.json` records not
 just title/author/ISBN but *how* the book was identified (`isbn`,
 `title_author`, `title_only`, or not at all) and the weakest evidence used to
 group formats together, so a frontend can show why a book needs review
@@ -71,6 +72,13 @@ Imports never block for confirmation. A book that couldn't be identified
 confidently is flagged for review instead, and a book a human has marked as
 reviewed keeps its metadata across later imports.
 
+Fixing a book is a frontend's job — the CLI only imports and inspects. From
+Python, `Library.edit`, `Library.mark_reviewed` and `Library.reidentify` do
+it; without a frontend, edit `title`, `author` or `isbn` in the book's
+`metadata.json` and set `"reviewed": true` so the fix survives the next
+import. `bookman list` picks such an edit up at once and refreshes the
+search index from what it read, so `bookman search` sees it from then on.
+
 ## As a library
 
 ```python
@@ -89,6 +97,13 @@ call `resolve_library`. Metadata lookups go through the `MetadataSource`
 protocol, so you can pass `NullSource()` to work offline or plug in your own
 source. Every exception raised is a `BookmanError`, and the package logs
 under the `"bookman"` logger with a `NullHandler` installed.
+
+**One writer at a time.** A library assumes a single process writes to it:
+one TUI *or* one CLI command, not both at once. Reading while something else
+writes is fine (every `metadata.json` is written atomically and the index is
+swapped in one step), but two concurrent imports into the same library can
+race on a book's folder, and the last `metadata.json` write wins. There is no
+lock file; if you run two frontends, run them against different libraries.
 
 The public API is exactly what `bookman/__init__.py` exports; see
 `docs/ARCHITECTURE.md` for the design decisions behind it.

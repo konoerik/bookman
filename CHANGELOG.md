@@ -17,11 +17,6 @@ All notable changes to this project are documented here. The format follows
   keeps everything a human set and gains only a cover it was missing,
   which is the way to get a cover for a book Open Library could not match
   on its own.
-- CLI commands for the above: `bookman review BOOK [--undo]`,
-  `bookman edit BOOK [--title T] [--author A | --no-author]
-  [--isbn I | --no-isbn]` and `bookman reidentify BOOK`. BOOK is the
-  title as `list` prints it, the book's folder name, or its id; a title
-  shared by several books is refused with their folder names listed.
 - A book now holds one file per format kind, and an import that would
   put a *different* file where one already is — a second EPUB edition, or
   two unrelated books that grouped by title — is refused instead of
@@ -49,7 +44,16 @@ All notable changes to this project are documented here. The format follows
   `metadata.json` moves to schema version 4 to carry it; versions 2 and 3
   are read as before and upgraded on the next save.
 
+- `Library.scan()` refreshes the search index from the `metadata.json`
+  files it reads, so a book fixed by editing its `metadata.json` by hand
+  is found by `search` after the next `scan` (or `bookman list`) without
+  a repair step.
+
 ### Changed
+- The CLI is for import and inspection only: `init`, `config`, `import`,
+  `list`, `search`. Fixing a book is a frontend's job (`Library.edit`,
+  `Library.mark_reviewed`, `Library.reidentify` from Python) or a hand
+  edit of `metadata.json`; the README says how.
 - On an accepted Open Library match the file's own author now stands,
   the same way its title already did; the record's author is used only
   when the file names none. Open Library returns the *work's* author

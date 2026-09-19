@@ -15,7 +15,9 @@ older layout is detected by `is_current` and rebuilt by its owner
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
 
 from bookman.errors import CatalogError
@@ -57,25 +59,47 @@ def rebuild_index(library_root: Path, db_path: Path) -> None:
         OSError: If library_root does not exist, or db_path cannot be
             written.
     """
-    if db_path.exists():
-        db_path.unlink()
+    rows = []
+    for directory in sorted(p for p in library_root.iterdir() if p.is_dir()):
+        try:
+            rows.append((directory.name, load_metadata(directory)))
+        except FileNotFoundError:
+            continue  # not a book folder
+        except CatalogError as exc:
+            _log.warning("not indexing %s: %s", directory, exc)
+    write_index(db_path, rows)
 
-    conn = sqlite3.connect(db_path)
+
+def write_index(db_path: Path, rows: Iterable[tuple[str, Book]]) -> None:
+    """Write a fresh index holding exactly `rows`, replacing any database
+    at `db_path` in one step (built beside it, then moved into place, so
+    a concurrent reader sees either the old index or the new one).
+
+    The counterpart of `rebuild_index` for a caller that has already
+    loaded the books -- `Catalog.all` pays that pass anyway, so a scan
+    can bring the index back in step with hand-edited metadata.json
+    files at no extra read (ADR-12 amendment).
+
+    Args:
+        db_path: Where the sqlite3 database file lives.
+        rows: (folder name, book) pairs, folder names relative to the
+            library root.
+
+    Raises:
+        OSError: If db_path cannot be written.
+    """
+    tmp_path = db_path.with_name(db_path.name + ".tmp")
+    if tmp_path.exists():
+        tmp_path.unlink()
+    conn = sqlite3.connect(tmp_path)
     try:
         conn.execute(_CREATE_TABLE)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-        for directory in sorted(p for p in library_root.iterdir() if p.is_dir()):
-            try:
-                book = load_metadata(directory)
-            except FileNotFoundError:
-                continue  # not a book folder
-            except CatalogError as exc:
-                _log.warning("not indexing %s: %s", directory, exc)
-                continue
-            conn.execute(_UPSERT, _row(directory.name, book))
+        conn.executemany(_UPSERT, (_row(name, book) for name, book in rows))
         conn.commit()
     finally:
         conn.close()
+    os.replace(tmp_path, db_path)
 
 
 def is_current(db_path: Path) -> bool:

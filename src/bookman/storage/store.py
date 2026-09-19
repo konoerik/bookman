@@ -158,6 +158,27 @@ class Catalog:
         """
         index.rebuild_index(self.root, self._index_path)
 
+    def reindex(self, books: list[Book]) -> None:
+        """Replace the search index with rows for exactly `books`, which
+        the caller has just loaded with `all()`.
+
+        This is how a hand edit of a metadata.json reaches `search`
+        without a repair command: `Library.scan` reads every sidecar
+        anyway and hands the result here (ADR-12 amendment). A failure
+        to write the index is logged and swallowed -- it is a cache,
+        and a read must never fail because the cache could not be
+        refreshed.
+
+        Args:
+            books: Every cataloged book, each carrying its `directory`.
+                A book without one is skipped.
+        """
+        rows = [(book.directory.name, book) for book in books if book.directory is not None]
+        try:
+            index.write_index(self._index_path, rows)
+        except OSError as exc:
+            _log.warning("could not refresh the search index at %s: %s", self._index_path, exc)
+
     def _ensure_index(self) -> None:
         if not index.is_current(self._index_path):
             self.rebuild_index()

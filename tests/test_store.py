@@ -118,6 +118,34 @@ def test_search_omits_a_matched_folder_whose_metadata_vanished(root):
     assert catalog.search("deep") == []
 
 
+def test_reindex_replaces_the_index_with_the_given_books(root):
+    catalog = Catalog(root)
+    book, directory = _new_book(root, "Deep Work", "Cal Newport")
+    catalog.put(book, directory)
+    other, other_dir = _new_book(root, "Sapiens", "Harari")
+    save_metadata(other, other_dir)  # bypasses put, so the index does not know it
+    assert catalog.search("harari") == []
+
+    catalog.reindex(catalog.all())
+
+    assert [b.title for b in catalog.search("harari")] == ["Sapiens"]
+    assert [b.title for b in catalog.search("deep")] == ["Deep Work"]
+
+
+def test_reindex_failure_is_logged_not_raised(root, caplog):
+    """The index is a cache; a scan must not fail because it could not
+    be refreshed."""
+    catalog = Catalog(root)
+    book, directory = _new_book(root, "Deep Work", "Cal Newport")
+    catalog.put(book, directory)
+    catalog._index_path = root  # a directory: the replace cannot succeed
+
+    with caplog.at_level("WARNING", logger="bookman.storage"):
+        catalog.reindex(catalog.all())
+
+    assert "could not refresh the search index" in caplog.text
+
+
 def test_rebuild_index_repairs_a_hand_edited_library(root):
     catalog = Catalog(root)
     book, directory = _new_book(root, "Deep Work", "Cal Newport")

@@ -77,7 +77,19 @@ class ImportBatchResult:
 
 
 class Library:
-    """A managed ebook library rooted at a single flat directory of book folders."""
+    """A managed ebook library rooted at a single flat directory of book folders.
+
+    **One writer at a time.** A library root assumes a single process
+    writes to it: one TUI, or one CLI command, not both at once and not
+    two TUIs. Reads (`scan`, `search`) are safe alongside a writer --
+    each metadata.json is written atomically and the search index is
+    replaced in one step -- but two concurrent *imports* into the same
+    root can interleave: both may resolve the same file to the same
+    book and race on its folder, and the second `metadata.json` write
+    wins. Nothing detects or prevents this; there is no lock file
+    (FEATURES M6). Any `Library` instances *within* one process share
+    the same assumption -- the class holds no lock either.
+    """
 
     def __init__(self, root: Path, *, source: MetadataSource | None = None) -> None:
         """Open (or initialize) a managed library at `root`.
@@ -271,6 +283,12 @@ class Library:
         same as one with no metadata.json at all, rather than aborting
         the whole scan.
 
+        The search index is refreshed from what was read, so a
+        metadata.json edited by hand (the way to fix a book without a
+        frontend, ADR-24) is found by `search` after the next scan
+        without any repair step. metadata.json stays the source of
+        truth; the index only ever restates it (ADR-12).
+
         Returns:
             Every cataloged Book in the library, in folder-name order,
             each carrying its `directory`.
@@ -278,7 +296,9 @@ class Library:
         Raises:
             FileNotFoundError: If `root` itself does not exist.
         """
-        return self._catalog.all()
+        books = self._catalog.all()
+        self._catalog.reindex(books)
+        return books
 
     def search(self, query: str) -> list[Book]:
         """Search cataloged books by title/author substring.

@@ -33,8 +33,8 @@ not that is post-1.0, however cheap it looks.
 | ~~Silent-merge and mislabel gaps~~ | ~~F14, A10, D9~~ | ✅ All closed 2026-09-18 — F14 by ADR-21 (refuse, never overwrite). Nothing on the import path loses data quietly any more |
 | ~~The core promise, pinned~~ | ~~F13, F16, A4, A8, F5~~ | ✅ Done 2026-09-18 — all five pinned in `test_library`; the code was as believed |
 | ~~Book identity~~ | ~~I5~~ | ✅ Done 2026-09-18 (ADR-17). Everything in K keys off it |
-| ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18), CLI commands the same day (ADR-20) |
-| Single-writer assumption | M6 | Documentation only; the honest statement of a real limitation |
+| ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18) on `Library`. CLI commands added the same day (ADR-20) and removed 2026-09-19 (ADR-24) |
+| ~~Single-writer assumption~~ | ~~M6~~ | ✅ Documented 2026-09-19 (README + `Library` docstring); the honest statement of a real limitation |
 | ~~Open decisions~~ | ~~OQ3 (C7)~~ | ✅ OQ1 decided 2026-09-18 (ADR-21); OQ3 decided 2026-09-19 (ADR-23): a different edition is a different book |
 
 **Out of scope for v1.0** — everything else in Parts I and II. The
@@ -378,9 +378,9 @@ built yet: the review flag exists, the way to act on it doesn't.
 
 | ID | Operation | Why | Status | Public API / notes |
 |---|---|---|---|---|
-| K1 | Mark reviewed / unreviewed | Clear the review queue | ✅ | `Library.mark_reviewed(book, reviewed=True)` (ADR-18); `bookman review BOOK [--undo]` |
-| K2 | Edit title / author / ISBN | Fix a wrong or unidentified book | ✅ | `Library.edit(book, *, title=, author=, isbn=)` (ADR-18). Renames the folder and its format files, revalidates and normalizes the ISBN, and **sets `reviewed`** — decided: without it the edit is silently overwritten by the next format import. Author and ISBN can be cleared by passing None; omitted fields are untouched. `bookman edit BOOK --title/--author/--no-author/--isbn/--no-isbn` |
-| K3 | Re-identify: retry the lookup for one book | After fixing a title, or when OL improves | ✅ | `Library.reidentify(book)` (ADR-18). Always runs; a reviewed book keeps its human-set fields and gains only a missing cover and empty fields — the E12 route. Never renames, since the book's own title always wins (ADR-10). `bookman reidentify BOOK` |
+| K1 | Mark reviewed / unreviewed | Clear the review queue | ✅ | `Library.mark_reviewed(book, reviewed=True)` (ADR-18). No CLI command (ADR-24) |
+| K2 | Edit title / author / ISBN | Fix a wrong or unidentified book | ✅ | `Library.edit(book, *, title=, author=, isbn=)` (ADR-18). Renames the folder and its format files, revalidates and normalizes the ISBN, and **sets `reviewed`** — decided: without it the edit is silently overwritten by the next format import. Author and ISBN can be cleared by passing None; omitted fields are untouched. No CLI command (ADR-24); without the TUI, edit `metadata.json` by hand |
+| K3 | Re-identify: retry the lookup for one book | After fixing a title, or when OL improves | ✅ | `Library.reidentify(book)` (ADR-18). Always runs; a reviewed book keeps its human-set fields and gains only a missing cover and empty fields — the E12 route. Never renames, since the book's own title always wins (ADR-10). No CLI command (ADR-24) |
 | K4 | Supply / replace / remove a cover (file or URL) | Only route to a cover for E12 cases | ❌ | Backlog; needs I3 to accept a user-supplied image |
 | K5 | Choose among lookup candidates | "Which of these is it?" in the TUI, instead of auto-pick | ❌ 💬 | `identify` returns one answer; a `candidates(parsed) -> list[…]` API plus `apply(book, candidate)` would let a frontend disambiguate B6/C7/D6-style cases. Changes the ADR-4 stance from "auto with flag" to "auto with flag, override available" |
 | K6 | Merge two books | Undo a false split (C10, D11) | ❌ | Formats move to one folder; conflicting same-kind formats must be refused or chosen, as F14 is on import |
@@ -412,12 +412,12 @@ built yet: the review flag exists, the way to act on it doesn't.
 
 | ID | Operation | Why | Status | Public API / notes |
 |---|---|---|---|---|
-| M1 | Rebuild the search index | Recover from corruption, after manual edits | 🔶 | `storage.index.rebuild_index` is internal; `Library.search` rebuilds only if the file is missing |
+| M1 | Rebuild the search index | Recover from corruption, after manual edits | ✅ | `Library.scan()` refreshes the index from every metadata.json it reads (ADR-12 amendment, 2026-09-19), so `bookman list` is the rebuild; `search` also rebuilds a missing or old-layout index. `test_library::scan_brings_search_in_step_with_a_hand_edited_metadata_json`. No separate command (ADR-24) |
 | M2 | Verify: metadata.json vs. disk (missing format files, orphan files, missing cover, unreadable JSON) | Trust the catalog | ❌ | `scan()` silently skips unreadable metadata.json — a frontend can't tell "empty" from "broken". Also the repair path for ADR-18's one failure window: a title edit interrupted partway through its inner file renames |
 | M3 | Repair: re-link or drop missing formats, adopt orphans | Fix what M2 finds | ❌ | |
 | M4 | Export catalog (JSON / CSV) | Backup, spreadsheets, other tools | ❌ | Cheap over `scan()` |
 | M5 | Relocate the library | Move to a new disk/path | 🔶 | `save_config` repoints; paths in metadata.json are relative so folders can be moved, but nothing verifies afterwards (M2) |
-| M6 | Single-writer assumption documented / enforced | Two TUI instances or TUI + CLI at once | 🔶 | Backlog: not concurrency-safe; at minimum document it, ideally a lock file |
+| M6 | Single-writer assumption documented / enforced | Two TUI instances or TUI + CLI at once | ✅ | **Documented** 2026-09-19, in the README ("As a library") and the `Library` class docstring: one writer per root, reads are safe alongside it, concurrent imports can race on a folder and the last `metadata.json` wins. Not enforced — no lock file; deliberately, for v1.0 (a personal tool with one user at a keyboard). Enforcement would be post-1.0 |
 | M7 | Library-level metadata (schema version, created, book count) | Detect an old library, show an overview | ❌ | Nothing at the root except the index file |
 
 ## N. Frontend contract
@@ -430,7 +430,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | N4 | Network configuration: timeouts, user-agent, endpoint override, disable | Tests, rate limits, mirrors | ❌ | Hard-coded in `identify.openlibrary` |
 | N5 | Logging instead of silence | Frontend can show "lookup failed: timeout" | ❌ | Failures are swallowed into "no match"; no `logging` calls |
 | N6 | Thread-safety statement | TUI will run imports off the UI thread | ❌ | Undocumented; relates to M6 |
-| N7 | CLI parity with the public API | CLI stays a thin wrapper (ADR-6) | ✅ | `init`, `config`, `import`, `list`, `search`, and since 2026-09-18 `review [--undo]`, `edit --title/--author/--no-author/--isbn/--no-isbn` and `reidentify` for K1–K3. A book is named by its title as `list` prints it, its folder name, or its `Book.id` (ADR-20) |
+| N7 | CLI covers import and inspection | A terminal user can fill a library and see what is in it (ADR-6) | ✅ | `init`, `config`, `import`, `list`, `search`. **Not** curation: `review`/`edit`/`reidentify` existed for a day (ADR-20) and were removed before release (ADR-24) — curation is the TUI's job, or a hand edit of `metadata.json`. A new `Library` operation does not get a subcommand |
 | N8 | Second metadata source (Google Books, …) behind one interface | E12-class gaps; resilience to OL outages | ❌ 💬 | CONTEXT names it as the future fix; needs a provider abstraction ADR |
 
 ## Reading the two parts together
@@ -450,6 +450,7 @@ matching heuristics:
 The first Part II slice that unblocks the TUI — **I5** (stable id),
 **K1** (set reviewed), **K2** (edit fields), **K3** (re-identify) and
 **L2/L10** (export what's already there) — is complete as of
-2026-09-18, with CLI commands for K1–K3 (N7) landing the same day.
+2026-09-18. (CLI commands for K1–K3 landed the same day and were
+removed the next, ADR-24: the CLI is import and inspection only.)
 What it exposed: the first operation that rewrites a book's layout on
 disk made M2/M3 (verify/repair) matter for the first time.

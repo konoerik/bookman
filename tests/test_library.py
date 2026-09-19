@@ -636,6 +636,29 @@ def test_search_works_after_the_library_folder_is_moved(tmp_path, library):
     assert book.formats[0].path.exists()
 
 
+def test_scan_brings_search_in_step_with_a_hand_edited_metadata_json(tmp_path, library):
+    """ADR-24's fallback for fixing a book without a frontend, closed by
+    the ADR-12 amendment: the next scan refreshes the index, so search
+    sees the edit without a repair command."""
+    import json
+
+    book = library.import_file(_make_epub(tmp_path / "a.epub", title="Deep Work", author="Unknown"))
+    assert book.author is None
+    metadata_path = book.directory / "metadata.json"
+    data = json.loads(metadata_path.read_text())
+    data["author"] = "Cal Newport"
+    data["reviewed"] = True
+    metadata_path.write_text(json.dumps(data))
+
+    assert library.search("newport") == []  # the index still says what the import said
+
+    [scanned] = library.scan()
+    assert scanned.author == "Cal Newport"
+    assert scanned.reviewed is True
+    [found] = library.search("newport")
+    assert found.author == "Cal Newport"
+
+
 def test_import_directory_imports_every_supported_file_at_top_level(tmp_path, library):
     source_dir = tmp_path / "Source"
     source_dir.mkdir()
