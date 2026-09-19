@@ -105,11 +105,13 @@ class Library:
            per `docs/IDENTIFICATION.md` steps IDENT-1..6,
            and accept a record only if it agrees with what the file
            says about itself (identify.match.match_basis). An
-           accepted record supplies the author and a cover URL, while
-           the title stays the file's own (the two agree, and the
-           file's spelling is usually the cleaner one); a rejected
-           ISBN is discarded. Otherwise the file's own title/author
-           stand, with `identified=None`.
+           accepted record supplies a cover URL and fills a missing
+           title or author, while a title or author the file has
+           stays the file's own (the two agree, and the file's
+           spelling is the publisher's; ADR-10, ADR-22) -- the record's
+           author is kept as `record_author`; a rejected ISBN is
+           discarded. Otherwise the file's own title/author stand,
+           with `identified=None`.
         3. Decide which book folder this file belongs to
            (`_find_book`; spec GROUP-1..3):
            a. An existing book with the same ISBN: that folder
@@ -448,6 +450,9 @@ class Library:
             book.isbn = found.isbn or book.isbn
             book.identified = found.basis
             adopt_cover = found.cover_url is not None
+        # Provenance, not a human's field: reviewed or not, the book
+        # records what the source says now.
+        book.record_author = found.record_author or book.record_author
 
         if adopt_cover and found.cover_url:
             self._save_cover(book, directory, found.cover_url)
@@ -678,10 +683,11 @@ def _apply_identification(
       flag: a human's corrections outrank anything an import finds,
       and clearing the flag only asks for another look.
     - If the file was identified at least as strongly as the book
-      already was, the file's author/isbn and `identified` replace the
-      book's (missing values never overwrite present ones). The title
-      is replaced only on *strictly* stronger evidence, so equally
-      identified formats don't take turns respelling it.
+      already was, the file's author/isbn, `record_author` and
+      `identified` replace the book's (missing values never overwrite
+      present ones). The title is replaced only on *strictly* stronger
+      evidence, so equally identified formats don't take turns
+      respelling it.
     - A weaker or failed identification changes nothing except filling
       an empty author/isbn.
 
@@ -717,6 +723,7 @@ def _apply_identification(
     if join is None or found.basis != book.identified:
         book.title = title
     book.author = found.author or book.author
+    book.record_author = found.record_author or book.record_author
     book.isbn = found.isbn or book.isbn
     book.identified = found.basis
     return found.cover_url

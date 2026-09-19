@@ -16,10 +16,10 @@ from bookman.errors import CatalogError
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis
 
 _METADATA_FILENAME = "metadata.json"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 # Versions whose fields this module understands directly. Version 1 is
 # handled separately, by migration.
-_MODERN_VERSIONS = (2, _SCHEMA_VERSION)
+_MODERN_VERSIONS = (2, 3, _SCHEMA_VERSION)
 
 # Namespace for deriving an id for a pre-version-3 book that has none
 # stored. Deterministic, so repeated reads of an un-upgraded file agree
@@ -35,9 +35,10 @@ _V1_CONFIDENCE_TO_IDENTIFIED = {
 
 
 def save_metadata(book: Book, directory: Path) -> None:
-    """Write a Book's metadata to <directory>/metadata.json (schema version 3).
+    """Write a Book's metadata to <directory>/metadata.json (schema version 4).
 
-    Serializes id, title, author, isbn, identified, grouped, reviewed, and
+    Serializes id, title, author, record_author, isbn, identified,
+    grouped, reviewed, and
     each format's kind and filename (relative to `directory`, not the
     absolute path stored on `BookFormat.path`), plus the cover filename
     if `book.cover_path` is set. Overwrites any existing metadata.json
@@ -67,6 +68,7 @@ def save_metadata(book: Book, directory: Path) -> None:
         "id": book.id,
         "title": book.title,
         "author": book.author,
+        "record_author": book.record_author,
         "isbn": book.isbn,
         "identified": book.identified.value if book.identified else None,
         "grouped": book.grouped.value if book.grouped else None,
@@ -146,6 +148,8 @@ def load_metadata(directory: Path) -> Book:
             id=_read_id(data, directory),
             title=data["title"],
             author=data["author"],
+            # Added in version 4; absent from older files.
+            record_author=data.get("record_author"),
             isbn=data["isbn"],
             formats=formats,
             cover_path=_resolve_filename(cover, directory, path) if cover else None,

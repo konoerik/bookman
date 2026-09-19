@@ -1,8 +1,8 @@
 # Context
 <!-- Updated by /wrap at session end. Edit manually if needed. Keep it under 8 lines. -->
 
-**Current focus:** Closing out v1.0 (FEATURES *v1.0 scope*). Green at 446 tests, ruff/mypy clean. No unblocked code work left — everything remaining is a decision: author-on-corroborated-match (IDENT-6), OQ3/C7 (editions), volumes related-or-not (I6).
-**Last session:** Shipped the CLI commands for K1–K3 (`review`/`edit`/`reidentify`, N7 → ✅, ADR-20) and closed F14/OQ1 as ADR-21 — a same-kind file is refused with the evidence (book, existing file, join basis), never overwritten; `FormatConflictError` + `ImportBatchResult.conflicts`; spec_version 2. OQ1's "needs I11" blocker was wrong: the folder's own copy is what a byte comparison needs. K11 (replace a format) and K12 (import as separate book) recorded as the deferred resolutions.
-**Blocking:** Three decisions — **file's author stands on a corroborated match** (OL work-level authors put an audiobook narrator on the book; seen live), **OQ3/C7**, **volumes** (I6). Backlog carries "decide what the CLI is for" — the user doubts they'd ever hand-edit via CLI. Carried over: CI's Windows leg still unlooked-at.
-**Next action:** Decide **author-on-corroborated-match** (IDENT-6): spec change + ADR, then the one branch in `_accepted`. It's the only remaining decision with observed harm.
-<!-- wrapped: 2026-09-18 -->
+**Current focus:** Closing out v1.0 (FEATURES *v1.0 scope*). Green at 473 tests, ruff/mypy clean. No unblocked code work left; remaining decision: volumes related-or-not (I6). (ISBN-as-identity discussed 2026-09-19 and settled as no — see PLAN.)
+**Last session (2026-09-19):** Decided OQ3 as ADR-23 (spec_version 4): a different edition is a different book. Found the accident was worse than recorded — bracketed/colon editions were *merging* with the first edition — and fixed it by lifting an ordinal edition marker out of the title before MATCH-0's stripping rules, appended as `edition N` so the volume-number rule keeps them apart. Spec rows 22–27, C7 ✅. Day before: ADR-22 (file's author wins on any match; `Book.record_author`; stand-in authors dropped; schema 4).
+**Blocking:** Nothing with observed harm. Volumes (I6) is a decision; the CLI's purpose is a backlog question; CI's Windows leg still unlooked-at.
+**Next action:** Either volumes (I6) as a decision, or call v1.0 and run `/prep`.
+<!-- wrapped: 2026-09-19 -->

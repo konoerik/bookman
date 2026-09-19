@@ -35,7 +35,7 @@ not that is post-1.0, however cheap it looks.
 | ~~Book identity~~ | ~~I5~~ | ✅ Done 2026-09-18 (ADR-17). Everything in K keys off it |
 | ~~The manual fallback~~ | ~~K1, K2, K3~~ | ✅ Done 2026-09-18 (ADR-18), CLI commands the same day (ADR-20) |
 | Single-writer assumption | M6 | Documentation only; the honest statement of a real limitation |
-| Open decisions | OQ3 (C7) | Blocks behavior that is in scope. (OQ1 decided 2026-09-18, ADR-21) |
+| ~~Open decisions~~ | ~~OQ3 (C7)~~ | ✅ OQ1 decided 2026-09-18 (ADR-21); OQ3 decided 2026-09-19 (ADR-23): a different edition is a different book |
 
 **Out of scope for v1.0** — everything else in Parts I and II. The
 notable ones, so they aren't mistaken for oversights: richer catalog
@@ -119,10 +119,10 @@ What the file says about itself: title (T), author (A), ISBN (I).
 | A3 | IDENT-4,5; MATCH-3 | T only | Search; accept only an *identical* normalized title → `identified=title_only`, `needs_review` | ✅ 🟢 | `test_resolve::search_without_file_author_requires_identical_title`; live: Lazarillo |
 | A4 | IDENT-4 | A only (no T, no I) | No lookup; title falls back to the filename stem; `identified=None` | ✅ | `test_resolve::does_nothing_without_title_or_isbn`, `test_library::falls_back_to_filename_stem_when_file_has_only_an_author` (no source call, stem names the folder) |
 | A5 | IDENT-2,3; MATCH-1 | I only | ISBN lookup; record supplies title and author → `identified=isbn` | ✅ | `test_resolve::uses_record_title_only_when_file_has_none`, `test_match::same_isbn_with_missing_fields_is_isbn` |
-| A6 | IDENT-3,6 | T + I, no A | ISBN lookup; record supplies author | ✅ | `test_resolve::accepts_isbn_hit_that_agrees_on_title` (file has `author=None`) |
+| A6 | IDENT-3,6 | T + I, no A | ISBN lookup; record fills the missing author | ✅ | `test_resolve::accepts_isbn_hit_that_agrees_on_title` (file has `author=None`) |
 | A7 | IDENT-6; MATCH-1 | A + I, no T | ISBN lookup; record supplies title | ✅ | same as A5 |
 | A8 | IDENT-4 | Nothing (no T, A, I) | Folder named after filename stem, `needs_review` | ✅ | `test_library::with_no_metadata_at_all_is_shelved_under_its_stem_for_review` |
-| A9 | MATCH-2 | Placeholder author ("Anonymous", "Unknown", "Various") | Treated as no author → A3 path | ✅ 🟢 | `test_match::author_surnames_ignores_placeholders`; live: Lazarillo keeps "Anonymous" |
+| A9 | MATCH-2 | Placeholder author ("Anonymous", "Unknown", "Various") | Treated as no author → A3 path | ✅ 🟢 | `test_match::author_surnames_ignores_placeholders`; live: Lazarillo keeps "Anonymous". Whether the string is *kept* on the book is D14 |
 | A10 | IDENT-1 | Several ISBNs in one file (print + ebook, or a cited list) | Try each until one agrees; a rejected one is dropped, the first unknown one is kept | ✅ | `test_resolve::tries_the_next_isbn_when_the_first_is_unknown`, `..._when_the_first_is_rejected`, `stops_at_the_first_accepted_isbn`, `keeps_the_first_unknown_isbn_when_none_is_accepted`, `drops_a_rejected_isbn_but_keeps_an_unknown_one`, `keeps_no_isbn_when_every_one_is_rejected`, `moves_on_to_the_next_isbn_when_a_lookup_fails` |
 | A11 | MATCH-0 | Title is whitespace/empty string | Treated as missing (A4/A8) | ❓ | `pdf._clean` strips; EPUB path unverified |
 | A12 | MATCH-0,3 | Generic junk title ("Untitled", "Microsoft Word - final.docx", "Book") with no author | No match; `needs_review` | ✅ | Two tiers. **Placeholder** ("Untitled", "Untitled Document 2", "No Title", converter stamps like "Microsoft Word - x.docx"): `normalize_title` returns "", so it counts as no title — it cannot match at all and is not searched for. **Generic** ("Book", "Final Draft", "New Document"): survives normalization, so it is still searched, but `match_basis` refuses it on the TITLE_ONLY path — it only reaches TITLE_AUTHOR, where an agreeing author does the work. Neither tier vetoes an ISBN, the same as a missing title. Keeps a real title like Alan Watts' "The Book" identifiable. Tests: `test_match::normalize_title_of_a_placeholder_is_empty`, `a_generic_title_survives_normalization_but_is_flagged`, `normalize_title_keeps_a_real_title_containing_a_junk_word`, `match_basis_two_placeholder_titles_do_not_match`, `match_basis_two_generic_titles_do_not_match_without_an_author`, `match_basis_generic_title_still_matches_when_the_author_agrees`, `match_basis_junk_title_does_not_veto_an_isbn`; `test_library::keeps_placeholder_titled_files_as_separate_books`, `keeps_generic_titled_files_as_separate_books`, `groups_generic_titled_files_when_the_author_agrees`; `test_resolve::does_not_search_on_a_placeholder_title`, `searches_a_generic_title_and_lets_the_author_settle_it` |
@@ -160,7 +160,7 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | C4 | MATCH-0 | Subtitle after `;`, ` - `, en/em dash | Agree | ✅ | `test_match::normalize_title_strips_subtitle_after_semicolon`, `…after_spaced_dash` |
 | C5 | MATCH-0 | Subtitle after a period ("A Christmas Carol. Being a Ghost Story…") | Agree | ⚠️ | PLAN Backlog: not split because ". " also appears inside titles ("Mr. Darcy…") |
 | C6 | MATCH-0 | Edition in `(…)` / `[…]` | Stripped, agree | ✅ | `test_match::normalize_title_strips_edition_parenthetical` |
-| C7 | MATCH-0 (OQ3) | Edition after a comma ("Algorithmic Thinking, 2nd Edition" vs "Algorithmic Thinking") | Disagree — a different edition is a different book | 🟢 ❓ | Verified in-session → None; live: the 2nd-edition file correctly rejects the 1st-edition cover. No unit test pins it. **Design stance to confirm:** should editions ever group? Note: since ADR-14 a *PDF* whose scraped ISBN is correct but whose OL title carries/lacks the edition suffix is rejected too (safe direction, `needs_review`) |
+| C7 | MATCH-0 | Edition marker in any position — after a comma, a colon, bare, or in brackets ("Algorithmic Thinking, 2nd Edition", "(2nd Edition)", ": 2nd Edition", "Second Edition", "[2nd ed.]") vs "Algorithmic Thinking" | Disagree — a different edition is a different book; two markers must agree; the same marker in any spelling agrees | ✅ 🟢 | ADR-23, decided 2026-09-19. Spec rows 22–27; `test_match::normalize_title_lifts_an_edition_marker_out_of_any_position`, `…titles_agree_keeps_editions_apart_and_matches_the_same_one`. Before ADR-23 the answer depended on punctuation: bracketed and colon-separated markers were stripped and the editions merged. Live: the 2nd-edition file rejects the 1st-edition cover. Cost: an unmarked title never agrees with a marked one, so a companion PDF with a bare `/Title` groups only via a shared ISBN. Ordinal-less markers ("Revised Edition") are unspecified |
 | C8 | MATCH-0 | Leading article ("The …" vs "…") | Agree | ✅ | `test_match::normalize_title_strips_leading_article_and_punctuation` |
 | C9 | MATCH-2,3 | Near-miss different books ("Book of Job" / "Book of Joel") | Disagree | ✅ | `test_match::match_basis_book_of_job_vs_joel_is_none`, `test_library::does_not_group_book_of_job_with_book_of_joel` |
 | C10 | MATCH-0 | Series prefix ("The Expanse 1: Leviathan Wakes" vs "Leviathan Wakes") | Agree | ❌ | Subtitle split keeps the *prefix* → None. Safe direction (no false merge) but no identification, no cover |
@@ -189,6 +189,8 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | D10 | MATCH-2 | Single-name author ("Homer", "Plato") | Surname is the name | ❓ | Works by construction; untested |
 | D11 | MATCH-2 | Surname-first cultures / non-Latin scripts ("村上 春樹" vs OL "Haruki Murakami") | Agree | ❌ | Last token is taken as surname on both sides; script mismatch and name order both defeat it |
 | D12 | MATCH-2 | Publisher/tool as author | See A13 | ❓ | |
+| D13 | IDENT-6 | Record's author list is the *work's* — every edition's contributors, e.g. an audiobook narrator ("Martin Luther King Jr., J.D. Jackson") | File's own author stands on any accepted match; the record's is kept as `record_author` | ✅ 🟢 | ADR-22; `test_resolve::keeps_the_files_author_over_the_records_on_a_corroborated_match`, `…on_an_isbn_match_too`, `test_library::identifies_isbn_less_book_by_title_search`; live 2026-09-18 |
+| D14 | IDENT-6 | File author is a stand-in for a blank ("Unknown", "N/A") | Treated as no author: filled from the record, never kept. "Anonymous"/"Various" are kept (they say something true) | ✅ | ADR-22; `test_resolve::treats_a_stand_in_author_as_none`, `…drops_a_stand_in_author_even_when_nothing_matches`, `…title_only_match_keeps_the_files_author` |
 
 ## E. Open Library behavior
 
@@ -201,7 +203,7 @@ Comparisons are file-vs-OL-record (identify) and file-vs-existing-book
 | E5 | IDENT-5 | Search: first result disagrees, a later one agrees | Later one accepted | ✅ | `test_resolve::skips_non_agreeing_search_docs_and_takes_first_agreeing` |
 | E6 | IDENT-5 | Several agree, some with a cover | Prefer the one with a cover | ✅ | `test_resolve::prefers_agreeing_doc_with_a_cover` |
 | E7 | IDENT-5 | A weaker match has a cover, a stronger one doesn't | Stronger basis wins | ✅ | `test_resolve::prefers_stronger_basis_over_cover` |
-| E8 | IDENT-6 | Record missing title or author | Filled from the file | ✅ | `test_resolve::fills_missing_record_fields_from_the_file` |
+| E8 | IDENT-6 | Record missing title or author | Filled from the file | ✅ | `test_resolve::fills_missing_record_fields_from_the_file`. Since ADR-22 the file's author wins even when the record has one (D13) |
 | E9 | IDENT-2 | Network error / timeout / 5xx | File-only, no exception | ✅ | `test_resolve::returns_file_metadata_on_network_error`, `test_library::falls_back_to_parsed_metadata_on_lookup_failure` |
 | E10 | IDENT-2 | Malformed JSON | Treated as failure | ✅ | `openlibrary.py` wraps `JSONDecodeError`; `test_openlibrary` |
 | E11 | IDENT-6 | Cover download fails | Book still cataloged, no cover | ✅ | `test_library::falls_back_when_cover_fetch_fails` |
@@ -295,7 +297,15 @@ leave a book unidentified, because the latter are already surfaced by
    every ISBN, dropping rejected ones and keeping the first unknown one.
 7. ~~**D9 — "Jr."/"Sr."/"III" become the surname.**~~ Closed: suffixes are
    dropped before the surname is taken.
-8. **C10, H11, A15, A16, D11** — books left unidentified for
+8. ~~**D13 — a corroborated match replaced the file's author with the
+   work's contributor list**~~ (an audiobook narrator, seen live).
+   Closed 2026-09-18 (ADR-22): the file's author stands, the record's
+   is kept as `record_author`.
+9. ~~**C7 — a bracketed or colon-separated edition merged with the
+   first edition.**~~ Closed 2026-09-19 (ADR-23): the marker is lifted
+   out before MATCH-0's stripping rules and compared like a volume
+   number.
+10. **C10, H11, A15, A16, D11** — books left unidentified for
    want of a heuristic (series prefix, filename, EPUB roles, XMP,
    name order). Each is a cover we don't fetch, not a wrong merge.
 
@@ -342,8 +352,8 @@ title/author/isbn/needs_review; `bookman.config` (ADR-8).
 | I9 | Description / blurb, subjects | Detail view | ❌ | Available from OL work records |
 | I10 | User fields: tags/shelves, rating, reading status, notes | Personal-library organization | ❌ 💬 | Where they live matters: in metadata.json (portable, per-book) vs. a separate user layer (survives re-identify). Needs an ADR |
 | I11 | Provenance: added date, source path/bundle name, per-file hash/size | "Where did this come from", duplicate detection (F14), audit | ❌ | Hash also enables "already imported this exact file" |
-| I12 | Metadata source per field (file / OL / user) | TUI can show "corrected by you" vs. "from Open Library" | 🔶 | `identified` covers file-vs-OL at book level; per-field and "user" provenance collapse into `reviewed` (ADR-9's deliberate choice — revisit if I10 lands) |
-| I13 | Schema versioning + migration | Old libraries keep working | ✅ | v1→v2 and v2→v3 migration on read, upgraded on next save; `test_catalog` |
+| I12 | Metadata source per field (file / OL / user) | TUI can show "corrected by you" vs. "from Open Library" | 🔶 | `identified` covers file-vs-OL at book level; per-field and "user" provenance collapse into `reviewed` (ADR-9's deliberate choice — revisit if I10 lands). **Author** is the exception since ADR-22: `Book.record_author` keeps the source's author beside the file's, so a frontend can offer "use Open Library's spelling" |
+| I13 | Schema versioning + migration | Old libraries keep working | ✅ | v1→v2, v2→v3 and v3→v4 (adds `record_author`) migration on read, upgraded on next save; `test_catalog` |
 | I14 | Author as a structured list, not one string | Author browsing, multi-author display | ❌ | Also fixes A14 (only the first `dc:creator` is kept) |
 
 ## J. Read and query operations
@@ -379,7 +389,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | K9 | Delete a book | Housekeeping | ❌ | Folder removal + index; decide whether source files (never moved, G10) are touched — they shouldn't be |
 | K10 | Undo / history of curation | Safety net for K2–K9 | ❌ 💬 | Probably out of scope for a personal tool; note the decision either way |
 | K11 | Replace a book's file for one kind deliberately | Resolve an F14 refusal when the new file is the one wanted (a fixed re-download, a better edition) | ❌ | Deferred from ADR-21 by choice. Shape: `import_file(path, replace=True)` or `Library.replace_format(book, path)`. Until then: delete the file in the folder and import again, which the CLI hint says |
-| K12 | Import a file as a new book, bypassing grouping | Resolve an F14 refusal when the merge was wrong (two unrelated "Dune"s) | ❌ | Deferred from ADR-21. The K7 split family; needs OQ3 thinking, since "different edition" and "different book" would both use it |
+| K12 | Import a file as a new book, bypassing grouping | Resolve an F14 refusal when the merge was wrong (two unrelated "Dune"s) | ❌ | Deferred from ADR-21. The K7 split family. Since ADR-23 "different edition" *is* "different book", so one operation covers both |
 
 ## L. Import operations
 
@@ -428,10 +438,11 @@ built yet: the review flag exists, the way to act on it doesn't.
 Several Part I gaps are cheaper to close as Part II features than as
 matching heuristics:
 
-- **C7, C16** (editions, ambiguous title-only merges) — a human
-  choosing among candidates (K5) or splitting (K7) is more reliable
-  than any threshold, once the evidence is *shown*. (C17 turned out to
-  be a clean rule — number tokens — and closed on the Part I side.)
+- **C16** (ambiguous title-only merges) — a human choosing among
+  candidates (K5) or splitting (K7) is more reliable than any
+  threshold, once the evidence is *shown*. (C17 and C7 turned out to be
+  clean rules — number tokens, and edition markers reduced to number
+  tokens — and closed on the Part I side.)
 - **E12** (no cover on Open Library) — only K4 or N8 fixes it.
 - ~~**F14** (same-kind overwrite)~~ — closed without I11 (ADR-21); the *resolution* is K11/K12.
 - **A14, D11** (multiple / non-Latin authors) — start with I14.

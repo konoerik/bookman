@@ -13,8 +13,16 @@ def _found(
     author: str | None = "Found Author",
     isbn: str | None = "9780306406157",
     cover_url: str | None = "cover.jpg",
+    record_author: str | None = "Record Author",
 ) -> Identification:
-    return Identification(title=title, author=author, isbn=isbn, cover_url=cover_url, basis=basis)
+    return Identification(
+        title=title,
+        author=author,
+        isbn=isbn,
+        cover_url=cover_url,
+        basis=basis,
+        record_author=record_author,
+    )
 
 
 def _book(**overrides: object) -> Book:
@@ -93,6 +101,28 @@ def test_failed_identification_on_existing_book_changes_nothing():
     assert (book.title, book.author, book.isbn) == ("Book Title", "Book Author", "9781234567897")
     assert book.identified == MatchBasis.TITLE_AUTHOR
     assert cover is None
+
+
+def test_record_author_follows_the_adopted_identification():
+    """ADR-22: provenance travels with the record whose fields were
+    adopted, and stays put when a weaker or failed lookup is not."""
+    book = _book(identified=MatchBasis.TITLE_AUTHOR, record_author="Old Record Author")
+
+    _apply_identification(book, _found(MatchBasis.ISBN), MatchBasis.TITLE_AUTHOR, title="T")
+    assert book.record_author == "Record Author"
+
+    _apply_identification(
+        book,
+        _found(MatchBasis.TITLE_ONLY, record_author="Weaker Record Author"),
+        MatchBasis.TITLE_AUTHOR,
+        title="T",
+    )
+    assert book.record_author == "Record Author"
+
+    _apply_identification(
+        book, _found(None, record_author=None), MatchBasis.TITLE_AUTHOR, title="T"
+    )
+    assert book.record_author == "Record Author"
 
 
 def test_adopted_identification_never_overwrites_present_values_with_missing_ones():

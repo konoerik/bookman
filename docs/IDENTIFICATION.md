@@ -159,6 +159,12 @@ ISBN: `asserted` from a metadata field, `scraped` from page text (ADR-14),
 | 19 | MATCH-3 | Untitled | — | Untitled | — | — | none | A placeholder is no title at all (A12) |
 | 20 | MATCH-3 | Dune | — | Emma | Jane Austen | — | none | Different titles, nothing to corroborate (C9) |
 | 21 | MATCH-1 | Deep Work | Cal Newport | The three voices of poetry | — | asserted | none | Title contradicts and no author vouches for the ISBN (B11) |
+| 22 | MATCH-2 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking | Daniel Zingaro | — | none | A different edition is a different book (C7) |
+| 23 | MATCH-2 | Algorithmic Thinking (2nd Edition) | Daniel Zingaro | Algorithmic Thinking | Daniel Zingaro | — | none | The marker survives the bracket rule (C7) |
+| 24 | MATCH-2 | Algorithmic Thinking: 2nd Edition | Daniel Zingaro | Algorithmic Thinking | Daniel Zingaro | — | none | And the subtitle rule (C7) |
+| 25 | MATCH-2 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking (Second ed.) | Daniel Zingaro | — | TITLE_AUTHOR | The same edition however it is written (C7) |
+| 26 | MATCH-2 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking, 3rd Edition | Daniel Zingaro | — | none | Two markers must agree (C7) |
+| 27 | MATCH-1 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking | Daniel Zingaro | asserted | ISBN | A shared ISBN with the author vouching still wins: the record is the edition (C7, B5) |
 
 Rows are added when a rule is added, not when a bug is found — a bug means
 the code disagrees with a row that already exists, which is a
@@ -171,8 +177,8 @@ Step IDs are stable — cite them from FEATURES rows, ADRs and commit
 messages.
 
 ```yaml
-spec_version: 2
-updated: 2026-09-18
+spec_version: 4
+updated: 2026-09-19
 scope: identify + group, and the match rule they share
 derived_from:
   - CLAUDE.md                # project goal and scope
@@ -185,6 +191,8 @@ derived_from:
   - ADR-21                   # one file per format kind; a conflicting file is refused, never overwritten
   - ADR-15                   # junk titles in two tiers
   - ADR-19                   # title disagreement vetoes an asserted ISBN unless the author vouches
+  - ADR-22                   # the file's own author wins too; the record's is kept as provenance
+  - ADR-23                   # a different edition is a different book; the marker survives MATCH-0
 # FEATURES rows named in `sources:` below are illustrative scenarios,
 # not sources of authority. See the History note at the top of this file.
 
@@ -243,8 +251,19 @@ steps:
     does: Reduce both titles to a comparable form before anything else.
     rules:
       - Normalize Unicode form and case.
+      - >
+        Lift out an *edition marker* first, before anything below can
+        discard it: an ordinal followed by "edition" or "ed." — "2nd
+        Edition", "Second Edition", "2nd ed.", wherever it sits in the
+        title and however it is set off (comma, colon, brackets, or
+        nothing). It is reduced to a number and put back at the end of
+        the normalized title, where the number rule of MATCH-2 applies
+        to it: two titles that both carry a marker must carry the same
+        one, and a title that carries one does not agree with one that
+        does not. A different edition is a different book (ADR-23), and
+        an unmarked title is not assumed to be the first edition.
       - Drop a subtitle introduced by ":", ";", a spaced dash, or an em/en dash.
-      - Drop a trailing parenthesized or bracketed group (edition notes).
+      - Drop a trailing parenthesized or bracketed group (other edition notes).
       - Drop a leading English article.
       - Strip punctuation and collapse whitespace.
       - >
@@ -252,8 +271,16 @@ steps:
         Document 2", "No Title", or a converter's filename stamp such as
         "Microsoft Word - chapter1.docx". It reduces to nothing and from
         here on is treated exactly as a missing title.
-    sources: [ADR-9, ADR-15, "FEATURES C1-C8", "FEATURES C11", "FEATURES C13", "FEATURES A12"]
+    sources: [ADR-9, ADR-15, ADR-23, "FEATURES C1-C8", "FEATURES C11", "FEATURES C13", "FEATURES A12"]
     unspecified:
+      - >
+        Edition markers without an ordinal — "Revised Edition",
+        "Expanded Edition", "Anniversary Edition", "2e" — are not
+        recognized. They fall to the subtitle and bracket rules like any
+        other words, so a bracketed or colon-separated one is dropped
+        and the titles may then agree. None has been seen in a bundle;
+        add the shape when one is.
+        sources: ADR-23
       - >
         A *series prefix* ("The Expanse 1: Leviathan Wakes") is not
         stripped. The subtitle rule above removes what follows the
@@ -325,11 +352,11 @@ steps:
         "Volume 2" are different books however long the shared prefix.
         sources: ADR-9, FEATURES C17, C18
       - >
-        Whether an edition difference is likewise a different book is
-        NOT settled here — see OQ3. Today's code answers "yes" as a
-        side effect of the title comparison, which is the safe
-        direction, but no rule in this spec requires it.
-        sources: OQ3, FEATURES C7
+        An edition difference is likewise a different book: MATCH-0
+        turns an edition marker into a number token, so this rule
+        keeps "2nd Edition" apart from "3rd Edition" and from an
+        unmarked title the same way it keeps volumes apart.
+        sources: ADR-23, FEATURES C7
 
   - id: MATCH-3
     stage: match
@@ -445,11 +472,32 @@ steps:
         is used only when the file has none.
         sources: ADR-10, FEATURES E14, FEATURES A7
       - >
-        The author comes from the record only when the match corroborated
-        it — ISBN or TITLE_AUTHOR. On a TITLE_ONLY match the record's
-        author is uncorroborated, so it may only fill a blank, never
-        replace what the file said.
-        sources: ADR-9, FEATURES A6, FEATURES E8
+        The author stays the file's own as well, whatever the basis. The
+        argument is the title's, plus one of its own: a match that
+        corroborated the author has by definition checked the file's
+        against the record's, so replacing it gains nothing — and loses
+        something, because the source's author list is in practice
+        *work*-level, the union across every edition, which can promote
+        an audiobook's narrator to co-author, and the source carries no
+        role field a rule could filter on. The file names who wrote
+        *this* edition. The record's author is used only when the file
+        has none.
+        sources: ADR-22, FEATURES D13, FEATURES A6, FEATURES E8
+      - >
+        A file author that is only a stand-in for a missing value —
+        "Unknown", "N/A" — is no author here: it is filled from the
+        record, not kept. "Anonymous" and "Various" are not stand-ins;
+        they say something true about the book and stand like any other
+        author. (Both kinds are equally *no evidence* at MATCH-2; the
+        distinction is only about what is worth keeping.)
+        sources: ADR-22, FEATURES A9, FEATURES D14
+      - >
+        The record's author is kept beside the book's own, as
+        `record_author`, so a frontend can show what the source says and
+        offer it as the alternative spelling. It is provenance, not a
+        second opinion: a difference between the two does not surface
+        the book for review.
+        sources: ADR-22, FEATURES I12
       - >
         The cover comes from the record. A record with no cover is still
         a valid identification; a failed cover download still leaves the
@@ -576,6 +624,27 @@ decided_questions:
       Deliberate replacement and "import as a separate book" are the
       follow-ups, FEATURES K11/K12.
 
+  - id: OQ3
+    ref: FEATURES C7
+    question: >
+      Is a different edition of a book a different book? "Algorithmic
+      Thinking, 2nd Edition" and "Algorithmic Thinking" did not match,
+      but only because the comma left the marker in place — bracketed
+      and colon-separated markers were stripped by MATCH-0 and the
+      editions then merged.
+    decided: 2026-09-19, ADR-23 — yes, a different edition is a different book (MATCH-0's edition rule).
+    note: >
+      Forced by the model as much as chosen: one file per kind (ADR-21)
+      means two editions each with an EPUB cannot share a folder, and
+      editions carry their own ISBNs and covers. Separate-when-wrong is
+      two folders side by side; merged-when-wrong is a lost file or a
+      bogus conflict (PR4). Grouping editions under one book with an
+      edition field (I7) would need per-edition file slots — not v1.0.
+      Cost accepted: a marked title does not agree with an unmarked one,
+      so an edition file whose companion PDF carries a bare title only
+      groups via a shared ISBN, and identifies via search only when the
+      record's title carries the marker too.
+
 open_questions:
   - id: OQ2
     ref: FEATURES B7 + I12
@@ -586,20 +655,5 @@ open_questions:
       rule that IDENT-3 applies.
     blocked_on: persisting ISBN provenance on the book — FEATURES I12.
     status: known divergence between IDENT-3 and GROUP-1, accepted for now.
-
-  - id: OQ3
-    ref: FEATURES C7
-    question: >
-      Is a different edition of a book a different book? "Algorithmic
-      Thinking, 2nd Edition" and "Algorithmic Thinking" currently do not
-      match, because the edition suffix survives normalization and the
-      titles then differ. That outcome is the safe direction, but it is
-      an accident of MATCH-0 rather than a decision, and nothing pins
-      it with a test.
-    blocked_on: >
-      A decision, not code. If editions should stay separate, MATCH-0
-      needs an explicit rule (and a test); if they should group, the
-      edition belongs in a field of its own — FEATURES I7.
-    status: undecided; the spec asserts nothing either way.
 
 ```

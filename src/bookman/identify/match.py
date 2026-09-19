@@ -21,6 +21,21 @@ _FUZZY_TITLE_THRESHOLD = 0.9
 _SUBTITLE_SEPARATORS = re.compile(r"\s*(?::|;|\s-\s|\s–\s|\s—\s|—)\s*")
 _TRAILING_BRACKETS = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$")
 _LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+")
+# An ordinal edition marker, anywhere in a casefolded title: "2nd edition",
+# "second edition", "2nd ed." (ADR-23). Ordinal-less markers ("revised
+# edition") are deliberately not matched -- see the spec's MATCH-0
+# unspecified list.
+_ORDINAL_WORDS = {
+    word: str(n)
+    for n, word in enumerate(
+        "first second third fourth fifth sixth seventh eighth ninth tenth".split(), start=1
+    )
+}
+_EDITION_MARKER = re.compile(
+    r"\b(?P<ordinal>\d{1,2}(?:st|nd|rd|th)|"
+    + "|".join(_ORDINAL_WORDS)
+    + r")\s+(?:edition|ed\.?)(?!\w)"
+)
 _NON_WORD = re.compile(r"[^\w\s]", re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
 _AUTHOR_SEPARATORS = re.compile(r"\s*(?:;|&|\band\b)\s*")
@@ -29,6 +44,10 @@ _AUTHOR_SEPARATORS = re.compile(r"\s*(?:;|&|\band\b)\s*")
 _NUMBER_TOKEN = re.compile(r"^(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3}))$")
 # "Authors" that name nobody and so can't corroborate anything.
 _NON_AUTHORS = frozenset({"anonymous", "anon", "unknown", "various", "unknown author"})
+# The subset of those that are only a stand-in for a missing value. Not
+# worth keeping on a book, unlike "Anonymous" or "Various", which say
+# something true about it (ADR-22). Whole-string, case-insensitive.
+_ABSENT_AUTHORS = frozenset({"unknown", "unknown author", "n/a"})
 # Generational suffixes: part of the name, never the surname (FEATURES D9).
 _NAME_SUFFIXES = frozenset({"jr", "jnr", "sr", "snr", "ii", "iii", "iv"})
 # Junk titles come in two strengths (docs/FEATURES.md A12).
@@ -64,6 +83,14 @@ def normalize_title(title: str) -> str:
     parenthesized/bracketed groups (edition notes), strips a leading
     English article, removes punctuation, and collapses whitespace.
 
+    An ordinal edition marker ("2nd Edition", "Second Edition", "2nd
+    ed.") is lifted out *before* the subtitle and bracket rules can
+    discard it and put back at the end as "edition N" (ADR-23), so that
+    `titles_agree`'s number rule keeps editions apart the way it keeps
+    volumes apart: "Algorithmic Thinking (2nd Edition)" and "Algorithmic
+    Thinking" are different books, and so are two different markers. An
+    unmarked title is not assumed to be the first edition.
+
     A title that names no book -- a placeholder ("Untitled", "Untitled
     Document 2", "No Title") or a converter's filename stamp ("Microsoft
     Word - chapter1.docx") -- normalizes to the empty string, because it
@@ -82,6 +109,7 @@ def normalize_title(title: str) -> str:
         placeholder title).
     """
     text = unicodedata.normalize("NFKC", title).casefold().strip()
+    text, edition = _lift_edition(text)
     text = _SUBTITLE_SEPARATORS.split(text, maxsplit=1)[0]
     while True:
         stripped = _TRAILING_BRACKETS.sub("", text)
@@ -91,7 +119,23 @@ def normalize_title(title: str) -> str:
     text = _LEADING_ARTICLE.sub("", text)
     text = _NON_WORD.sub(" ", text)
     normalized = _WHITESPACE.sub(" ", text).strip()
-    return "" if _is_junk_title(title, normalized) else normalized
+    if _is_junk_title(title, normalized):
+        return ""
+    return f"{normalized} edition {edition}" if normalized and edition else normalized
+
+
+def _lift_edition(text: str) -> tuple[str, str | None]:
+    """Remove the first ordinal edition marker from a casefolded title and
+    return the remainder with the edition number ("2nd ed." -> "2").
+
+    Spec: MATCH-0's edition rule.
+    """
+    found = _EDITION_MARKER.search(text)
+    if found is None:
+        return text, None
+    ordinal = found.group("ordinal")
+    number = _ORDINAL_WORDS.get(ordinal) or ordinal.rstrip("stndrh")
+    return text[: found.start()] + text[found.end() :], number
 
 
 def _is_junk_title(raw: str, normalized: str) -> bool:
@@ -141,6 +185,17 @@ def is_usable_title(title: str) -> bool:
     Spec: IDENT-4.
     """
     return bool(normalize_title(title))
+
+
+def is_usable_author(author: str) -> bool:
+    """Whether an author string says who wrote the book, as opposed to
+    being a stand-in for a missing value ("Unknown", "N/A"). "Anonymous"
+    counts as usable: it is a statement about the book, not a blank.
+
+    Spec: IDENT-6's stand-in rule. Distinct from what `author_surnames`
+    ignores, which is the wider set of names that corroborate nothing.
+    """
+    return author.casefold().strip() not in _ABSENT_AUTHORS and bool(author.strip())
 
 
 def author_surnames(author: str) -> set[str]:

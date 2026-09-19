@@ -43,6 +43,30 @@ All notable changes to this project are documented here. The format follows
   versions 2 and 3 are both readable, and version 1 keeps its existing
   migration path.
 
+- `Book.record_author` — what the Open Library record named as the
+  author, kept beside the book's own `author` so a frontend can show
+  "Open Library says …" and offer it as an alternative spelling.
+  `metadata.json` moves to schema version 4 to carry it; versions 2 and 3
+  are read as before and upgraded on the next save.
+
+### Changed
+- On an accepted Open Library match the file's own author now stands,
+  the same way its title already did; the record's author is used only
+  when the file names none. Open Library returns the *work's* author
+  list — every edition's contributors, so an audiobook's narrator was
+  landing on the book as a co-author. Files whose own author is a
+  stand-in for a blank ("Unknown", "N/A") are treated as having none
+  and get the record's author instead; "Anonymous" and "Various" are
+  kept as written.
+- A different edition is now a different book, whatever punctuation the
+  title uses. An ordinal edition marker — "2nd Edition", "Second Edition",
+  "2nd ed." — is recognized before the subtitle and bracket rules run,
+  so "Algorithmic Thinking (2nd Edition)" and "Algorithmic Thinking: 2nd
+  Edition" no longer group with the first edition (they did; the comma
+  form never did). Two files carrying the same edition, however written,
+  still group, and a shared ISBN still identifies an edition file
+  against its edition record.
+
 ### Fixed
 - A junk title no longer groups unrelated files. A *placeholder* —
   "Untitled", "Untitled Document 2", "No Title", or a converter's

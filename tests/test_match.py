@@ -34,9 +34,48 @@ def test_normalize_title_keeps_hyphenated_words():
     assert normalize_title("Self-Reliance") == "self reliance"
 
 
-def test_normalize_title_strips_edition_parenthetical():
-    assert normalize_title("Fluent Python (2nd Edition)") == "fluent python"
-    assert normalize_title("Fluent Python [Early Release] (2nd Edition)") == "fluent python"
+def test_normalize_title_strips_trailing_brackets_but_keeps_an_edition_marker():
+    assert normalize_title("Fluent Python [Early Release]") == "fluent python"
+    assert normalize_title("Fluent Python (2nd Edition)") == "fluent python edition 2"
+    assert (
+        normalize_title("Fluent Python [Early Release] (2nd Edition)") == "fluent python edition 2"
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Algorithmic Thinking, 2nd Edition",
+        "Algorithmic Thinking 2nd Edition",
+        "Algorithmic Thinking (2nd Edition)",
+        "Algorithmic Thinking: 2nd Edition",
+        "Algorithmic Thinking [2nd ed.]",
+        "Algorithmic Thinking, Second Edition",
+        "Algorithmic Thinking (Second ed.)",
+        "Algorithmic Thinking: Learn Algorithms, 2nd Edition",
+    ],
+)
+def test_normalize_title_lifts_an_edition_marker_out_of_any_position(title):
+    """ADR-23 / FEATURES C7: the marker is found before the subtitle and
+    bracket rules run, so punctuation cannot make editions merge."""
+    assert normalize_title(title) == "algorithmic thinking edition 2"
+
+
+def test_normalize_title_reads_larger_ordinals_and_leaves_other_editions_alone():
+    assert normalize_title("Algorithmic Thinking, 10th Ed.") == "algorithmic thinking edition 10"
+    assert normalize_title("Thinking, 21st edition") == "thinking edition 21"
+    # No ordinal, no marker: these are the spec's unspecified shapes.
+    assert normalize_title("Dune: Limited Edition") == "dune"
+    assert normalize_title("Fluent Python (Revised Edition)") == "fluent python"
+    # Not an edition at all.
+    assert normalize_title("The 2nd Editor") == "2nd editor"
+
+
+def test_titles_agree_keeps_editions_apart_and_matches_the_same_one():
+    second, plain = "Algorithmic Thinking, 2nd Edition", "Algorithmic Thinking"
+    assert not titles_agree(second, plain)
+    assert not titles_agree(second, "Algorithmic Thinking, 3rd Edition")
+    assert titles_agree(second, "Algorithmic Thinking (Second ed.)")
 
 
 def test_normalize_title_strips_leading_article_and_punctuation():

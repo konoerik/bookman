@@ -12,11 +12,11 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TypeVar
 
 from bookman.formats.base import ParsedMetadata
-from bookman.identify.match import is_usable_title, match_basis
+from bookman.identify.match import is_usable_author, is_usable_title, match_basis
 from bookman.identify.source import Candidate, MetadataSource, MetadataSourceError
 from bookman.models import MatchBasis, stronger_basis
 
@@ -31,14 +31,19 @@ class Identification:
     Attributes:
         title: Resolved title (the file's own, falling back to an
             accepted record's), or None if neither had one.
-        author: Resolved author (an accepted record's when the match
-            corroborated it, else the file's).
+        author: Resolved author (the file's own, falling back to an
+            accepted record's), or None if neither had one. A file
+            author that was only a stand-in ("Unknown") counts as none.
         isbn: The file's ISBN-13, or None if the file had none or its
             ISBN was rejected as not describing this file.
         cover_url: Cover to download for the accepted record, if any.
         basis: How the accepted record was matched to the file, or
             None if no record was accepted and title/author are the
             file's own.
+        record_author: What the accepted record said the author is,
+            kept as provenance so a frontend can offer it beside the
+            file's own spelling (ADR-22). None if no record was
+            accepted or it named no author.
     """
 
     title: str | None
@@ -46,6 +51,7 @@ class Identification:
     isbn: str | None
     cover_url: str | None
     basis: MatchBasis | None
+    record_author: str | None = None
 
 
 def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
@@ -71,13 +77,15 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
     3. If neither step accepted a record, or the lookup failed, return
        the file's own metadata with `basis=None`.
 
-    An accepted record supplies the cover, and the author when the
-    match corroborated it (ISBN or TITLE_AUTHOR). On a TITLE_ONLY match
-    the record's author is uncorroborated, so it only fills in a file
-    that had none. The title stays the file's own: acceptance already
-    established that the two agree, and the publisher's spelling in
-    the file is usually cleaner than Open Library's crowd-sourced one.
-    The record's title is used only when the file has none.
+    An accepted record supplies the cover. The title and author stay
+    the file's own: acceptance already established that the two agree,
+    the publisher's spelling in the file is usually cleaner than Open
+    Library's crowd-sourced one, and the record's author list is the
+    work's -- every edition's contributors, narrators included -- while
+    the file names who wrote this one (ADR-22). The record's title and
+    author are used only when the file has none; the record's author is
+    also kept as `record_author` for a frontend to offer. A file author
+    that is only a stand-in ("Unknown", "N/A") counts as none.
 
     Args:
         parsed: Metadata extracted from the file by a format parser.
@@ -87,6 +95,12 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         An Identification. Never raises for a failed or empty lookup
         (spec PR1: identification is advisory, never blocking).
     """
+    if parsed.author is not None and not is_usable_author(parsed.author):
+        # IDENT-6's stand-in rule, applied up front so every path below
+        # -- match, accept, or file-only -- sees the file as authorless.
+        _log.debug("IDENT-6 ignoring stand-in author %r", parsed.author)
+        parsed = replace(parsed, author=None)
+
     isbn: str | None = None
     # IDENT-1: try each ISBN in turn until one is accepted. A file can
     # legitimately carry the print and ebook ISBNs, or a cited list; the
@@ -178,20 +192,17 @@ def _accepted(
 ) -> Identification:
     """Apply an accepted record to the file's metadata.
 
-    Spec: IDENT-6. The title stays the file's own (ADR-10); the record's
-    author is adopted only when the match corroborated it, so on a
-    TITLE_ONLY match it may only fill a blank.
+    Spec: IDENT-6. The title (ADR-10) and author (ADR-22) stay the
+    file's own; the record's fill a blank, and its author is kept as
+    provenance either way.
     """
-    if basis == MatchBasis.TITLE_ONLY:
-        author = parsed.author or record.author
-    else:
-        author = record.author or parsed.author
     return Identification(
         title=parsed.title or record.title,
-        author=author,
+        author=parsed.author or record.author,
         isbn=isbn,
         cover_url=record.cover_url,
         basis=basis,
+        record_author=record.author,
     )
 
 

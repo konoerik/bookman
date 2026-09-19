@@ -189,7 +189,8 @@ def test_identify_searches_by_title_and_author_without_isbn(source):
     assert source.calls == [("search", "Deep Work: Rules for Focused Success", "Newport, Cal")]
     assert found.basis == MatchBasis.TITLE_AUTHOR
     assert found.title == "Deep Work: Rules for Focused Success"
-    assert found.author == "Cal Newport"
+    assert found.author == "Newport, Cal"
+    assert found.record_author == "Cal Newport"
     assert found.isbn is None
     assert found.cover_url == "dw.jpg"
 
@@ -243,6 +244,56 @@ def test_identify_prefers_stronger_basis_over_cover(source):
 
     assert found.basis == MatchBasis.TITLE_AUTHOR
     assert found.cover_url is None
+
+
+MLK_WORK = Candidate(
+    title="Strength to Love",
+    author="Martin Luther King Jr., J.D. Jackson",  # the audiobook's narrator
+    cover_url="stl.jpg",
+)
+
+
+def test_identify_keeps_the_files_author_over_the_records_on_a_corroborated_match(source):
+    """FEATURES D13 / ADR-22: a work-level author list carries every
+    edition's contributors. The file names who wrote this one."""
+    source.results = [MLK_WORK]
+
+    found = identify(_parsed(title="Strength to Love", author="Martin Luther King Jr."), source)
+
+    assert found.basis == MatchBasis.TITLE_AUTHOR
+    assert found.author == "Martin Luther King Jr."
+    assert found.record_author == "Martin Luther King Jr., J.D. Jackson"
+
+
+def test_identify_keeps_the_files_author_on_an_isbn_match_too(source):
+    source.records[ISBN] = MLK_WORK
+
+    found = identify(
+        _parsed(title="Strength to Love", author="King, Martin Luther, Jr.", isbns=[ISBN]), source
+    )
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.author == "King, Martin Luther, Jr."
+    assert found.record_author == "Martin Luther King Jr., J.D. Jackson"
+
+
+@pytest.mark.parametrize("stand_in", ["Unknown", "unknown author", "N/A", "  "])
+def test_identify_treats_a_stand_in_author_as_none(source, stand_in):
+    """FEATURES D14: "Unknown" is a blank, so the record fills it."""
+    source.results = [DEEP_WORK]
+
+    found = identify(_parsed(title="Deep Work", author=stand_in), source)
+
+    assert found.basis == MatchBasis.TITLE_ONLY
+    assert found.author == "Cal Newport"
+
+
+def test_identify_drops_a_stand_in_author_even_when_nothing_matches(source):
+    found = identify(_parsed(title="Deep Work", author="Unknown"), source)
+
+    assert found.basis is None
+    assert found.author is None
+    assert found.record_author is None
 
 
 def test_identify_title_only_match_keeps_the_files_author(source):

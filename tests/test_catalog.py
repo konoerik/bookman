@@ -189,12 +189,12 @@ def test_save_then_load_metadata_roundtrips_none_fields(tmp_path):
     assert loaded.needs_review is True
 
 
-def test_save_metadata_writes_schema_version_3_without_confidence(tmp_path):
+def test_save_metadata_writes_schema_version_4_without_confidence(tmp_path):
     directory, book = _make_book_dir(tmp_path)
     save_metadata(book, directory)
     data = json.loads((directory / "metadata.json").read_text())
 
-    assert data["version"] == 3
+    assert data["version"] == 4
     assert data["id"] == book.id
     assert "confidence" not in data
     assert data["identified"] == "isbn"
@@ -236,7 +236,7 @@ def test_load_metadata_upgrades_version_1_file_on_next_save(tmp_path):
     save_metadata(load_metadata(directory), directory)
     data = json.loads((directory / "metadata.json").read_text())
 
-    assert data["version"] == 3
+    assert data["version"] == 4
     assert data["identified"] == "isbn"
     assert data["id"]
 
@@ -263,7 +263,7 @@ def test_load_metadata_rejects_unknown_match_basis(tmp_path):
 def test_load_metadata_rejects_unsupported_schema_version(tmp_path):
     directory, book = _make_book_dir(tmp_path)
     save_metadata(book, directory)
-    data = (directory / "metadata.json").read_text().replace('"version": 3', '"version": 99')
+    data = (directory / "metadata.json").read_text().replace('"version": 4', '"version": 99')
     (directory / "metadata.json").write_text(data)
 
     with pytest.raises(ValueError):
@@ -322,6 +322,32 @@ def test_pre_v3_file_gets_a_stable_id_across_repeated_loads(tmp_path):
     (directory / "metadata.json").write_text(json.dumps(data))
 
     assert load_metadata(directory).id == load_metadata(directory).id
+
+
+def test_record_author_round_trips(tmp_path):
+    directory, book = _make_book_dir(tmp_path)
+    book.record_author = "Martin Luther King Jr., J.D. Jackson"
+    save_metadata(book, directory)
+
+    assert load_metadata(directory).record_author == "Martin Luther King Jr., J.D. Jackson"
+
+
+def test_v3_file_without_record_author_loads_as_none(tmp_path):
+    """A version-3 file predates `record_author` (ADR-22); it reads as
+    unknown provenance and is upgraded on its next save."""
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    del data["record_author"]
+    data["version"] = 3
+    (directory / "metadata.json").write_text(json.dumps(data))
+
+    loaded = load_metadata(directory)
+    assert loaded.record_author is None
+    assert loaded.author == book.author
+
+    save_metadata(loaded, directory)
+    assert json.loads((directory / "metadata.json").read_text())["version"] == 4
 
 
 def test_pre_v3_derived_id_becomes_a_stored_id_on_save(tmp_path):

@@ -7,15 +7,18 @@
 Remaining v1.0 work (FEATURES *v1.0 scope*): none unblocked. Every
 item left is a decision:
 
-- **File's author stands on a corroborated match** (IDENT-6): on a
-  TITLE_AUTHOR/ISBN match the record's author *replaces* the file's, and
-  Open Library returns *work*-level `author_name`, which is the union
-  across editions — so an audiobook narrator promoted to the work lands
-  on the book ("Martin Luther King Jr., J.D. Jackson", seen live
-  2026-09-18). ADR-10's argument applied to authors; one branch in
-  `_accepted`. OL has no role field anywhere, so this is the only fix
-  that works from every lookup route.
-- **OQ3 / C7** — is a different edition a different book?
+- ~~**File's author stands on a corroborated match** (IDENT-6)~~ — done
+  2026-09-18, ADR-22 (file's author wins; `record_author` kept; stand-in
+  authors dropped).
+- ~~**OQ3 / C7** — is a different edition a different book?~~ — decided
+  2026-09-19, ADR-23: yes. Marker lifted out before MATCH-0 strips it.
+- ~~**ISBN uniqueness**~~ — discussed 2026-09-19. The idea was ISBN as
+  the folder name / identity. Settled as no, without code: not every
+  book has one, one book can have several, it can be wrong, and it is
+  unreadable in a file browser. ADR-1 (title-named folders) and ADR-17
+  (`Book.id` is identity; the folder is a display name) already give
+  the reliable identifier the idea was after. ISBN stays evidence, not
+  identity.
 - Volumes: C17 keeps them apart. Should they also be *related* (I6
   series/volume), or is "separate and unmerged" the v1.0 answer?
 

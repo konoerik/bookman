@@ -81,7 +81,13 @@ class Book:
             (ADR-17). Always set: a Book built in memory gets a fresh
             one, a Book loaded from disk gets the stored one.
         title: Display title.
-        author: Author name(s), or None if unknown.
+        author: Author name(s), or None if unknown. The file's own
+            spelling when the file had one (ADR-22).
+        record_author: What the metadata source's record named as the
+            author, kept as provenance beside `author` so a frontend can
+            show "Open Library says ..." and offer it as the alternative
+            spelling. None when no record was accepted. A difference
+            from `author` is not a review signal.
         isbn: An ISBN-13 found in one of the book's files, or None.
         formats: The format files on disk for this book.
         cover_path: The cover image on disk, if one was fetched.
@@ -109,6 +115,7 @@ class Book:
     author: str | None
     isbn: str | None
     id: str = field(default_factory=lambda: uuid4().hex)
+    record_author: str | None = None
     formats: list[BookFormat] = field(default_factory=list)
     cover_path: Path | None = None
     identified: MatchBasis | None = None

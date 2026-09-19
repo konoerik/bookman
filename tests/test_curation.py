@@ -204,6 +204,19 @@ def test_reidentify_leaves_a_reviewed_books_fields_alone(library, book, source):
     assert library.scan()[0].author == "The Real Author"
 
 
+def test_reidentify_records_the_sources_author_even_on_a_reviewed_book(library, book, source):
+    """`record_author` is the source's statement, not the human's field
+    (ADR-22), so a reviewed book still learns what the source says."""
+    library.edit(book, author="Frank Herbert")
+
+    source.results = [Candidate(title="Dune", author="Herbert, Frank", cover_url=None)]
+    library.reidentify(book)
+
+    assert book.author == "Frank Herbert"
+    assert book.record_author == "Herbert, Frank"
+    assert library.scan()[0].record_author == "Herbert, Frank"
+
+
 def test_reidentify_fetches_a_missing_cover_for_a_reviewed_book(library, book, source):
     """The E12 route: a human fixes the title, then asks for the cover."""
     library.edit(book, title="Dune")

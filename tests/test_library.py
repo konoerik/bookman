@@ -377,7 +377,8 @@ def test_import_file_identifies_isbn_less_book_by_title_search(tmp_path, library
     book = library.import_file(epub)
 
     assert book.identified == MatchBasis.TITLE_AUTHOR
-    assert book.author == "Lewis Carroll"
+    assert book.author == "Carroll, Lewis"  # the file's own spelling (ADR-22)
+    assert book.record_author == "Lewis Carroll"
     assert book.isbn is None
     assert book.cover_path is not None
     assert book.cover_path.read_bytes() == b"cover bytes"
