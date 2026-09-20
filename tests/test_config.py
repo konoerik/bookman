@@ -20,7 +20,10 @@ def _isolated_environment(monkeypatch, tmp_path):
     monkeypatch.delenv(config.ENV_CONFIG, raising=False)
     monkeypatch.delenv(config.ENV_LIBRARY, raising=False)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    # `Path.home()` and `expanduser` read HOME on POSIX but USERPROFILE on
+    # Windows (HOME is ignored there since Python 3.8), so fake both.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
 
 
 def test_config_path_on_macos(monkeypatch, tmp_path):
