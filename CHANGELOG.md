@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Progress while importing a directory: `Library.iter_import` yields an
+  `ImportEvent` before each file is attempted and again with its outcome
+  (the `Book`, a `FormatConflictError`, or the exception that failed it),
+  so a frontend can show which file it is waiting on and a progress
+  fraction; stopping the iteration cancels the rest of the batch.
+  `import_directory` is unchanged and now collects the same events via
+  `ImportBatchResult.record`. `bookman import <dir>` prints each file's
+  line as it finishes (`[3/41] foo.epub ... imported: …`) instead of
+  going quiet until the whole batch is done.
 - Curation: `Library.mark_reviewed`, `Library.edit` and
   `Library.reidentify` — the half of the review workflow that was
   missing. `edit` corrects a book's title, author or ISBN, renaming its

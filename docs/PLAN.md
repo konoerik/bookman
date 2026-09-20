@@ -4,23 +4,20 @@
 <!-- Current sprint items. Keep this short — 5-10 items max.
      If it grows beyond that, move lower-priority items to Backlog. -->
 
-Remaining v1.0 work (FEATURES *v1.0 scope*): none unblocked. Every
-item left is a decision:
+v1.0 scope is complete. Remaining before release:
 
-- ~~**File's author stands on a corroborated match** (IDENT-6)~~ — done
-  2026-09-18, ADR-22 (file's author wins; `record_author` kept; stand-in
-  authors dropped).
-- ~~**OQ3 / C7** — is a different edition a different book?~~ — decided
-  2026-09-19, ADR-23: yes. Marker lifted out before MATCH-0 strips it.
-- ~~**ISBN uniqueness**~~ — discussed 2026-09-19. The idea was ISBN as
-  the folder name / identity. Settled as no, without code: not every
-  book has one, one book can have several, it can be wrong, and it is
-  unreadable in a file browser. ADR-1 (title-named folders) and ADR-17
-  (`Book.id` is identity; the folder is a display name) already give
-  the reliable identifier the idea was after. ISBN stays evidence, not
-  identity.
-- Volumes: C17 keeps them apart. Should they also be *related* (I6
-  series/volume), or is "separate and unmerged" the v1.0 answer?
+- ~~**Windows CI leg**~~ — green 2026-09-20 on `21aefe5`, full matrix.
+- ~~Import progress~~ — done 2026-09-20 (ADR-25): `Library.iter_import`
+  streams `ImportEvent`s; the CLI prints per file as it goes.
+- **Frontend guide `docs/API.md`** — task-oriented (open a library →
+  import with progress → read the catalog → what `Book` fields mean →
+  curate → errors → plug in a `MetadataSource`), with `cli.py` cited as
+  the worked example. Docstrings stay the per-signature reference. Add a
+  test that every `bookman.__all__` name is mentioned in it. Writing it
+  is the final API review before the surface freezes.
+- `/prep`, then `/release`.
+- ~~Volumes~~ — closed 2026-09-20: "separate and unmerged" is the v1.0
+  answer (C17/F15); relating them is I6, post-1.0. Sentence on the I6 row.
 
 ## Backlog
 <!-- Accepted but not yet active. Load this section only when planning or prioritizing. -->
@@ -37,6 +34,10 @@ item left is a decision:
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- Windows CI fix (2026-09-20): the config test fixture faked the home dir with HOME only; Windows reads USERPROFILE. Test-only, pushed as `21aefe5` with the three preceding commits; result pending.
+- ISBN-as-identity (2026-09-19): discussed and settled as no — not every book has one, one book can have several, it can be wrong, unreadable as a folder name. ADR-1 + ADR-17 already give the identifier. No code.
+- OQ3 / C7 (2026-09-19, ADR-23): a different edition is a different book. The accident was worse than recorded — bracketed/colon editions were merging; an ordinal edition marker is now lifted out before MATCH-0's stripping rules and compared like a volume number. Spec rows 22–27, spec_version 4.
+- IDENT-6 author rule (2026-09-18, ADR-22): the file's author stands on any accepted match; `Book.record_author` keeps the record's (schema 4); stand-in authors ("Unknown", "N/A") dropped, "Anonymous"/"Various" kept. FEATURES D13/D14.
 - M6 documented (2026-09-19): single-writer assumption in the README and the `Library` docstring; no lock file for v1.0. The last open v1.0 scope row — **v1.0 is complete as scoped.**
 - Index self-heals on scan (2026-09-19, ADR-12 amendment): `Library.scan()` refreshes the search index from what it read, closing the hole ADR-24 opened (a hand-edited `metadata.json` reached `list` but not `search`). M1 ✅. `bookman list` is the reindex command.
 - CLI trimmed to import + inspect (2026-09-19, ADR-24): `review`/`edit`/`reidentify` removed before they ever shipped; the N7 parity rule dropped — a new `Library` operation does not get a subcommand. Curation is the TUI's, or a hand edit of `metadata.json`. 473 → 458 tests.

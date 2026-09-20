@@ -4,8 +4,9 @@ from helpers import make_epub as _make_epub
 from helpers import make_pdf as _make_pdf
 
 from bookman.errors import FormatConflictError, UnsupportedFormatError
+from bookman.formats.epub import BadEpubError
 from bookman.identify.source import Candidate
-from bookman.library import Library, _sanitize_dirname
+from bookman.library import ImportBatchResult, Library, _sanitize_dirname
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis
 from bookman.storage.catalog import save_metadata
 
@@ -740,6 +741,68 @@ def test_import_directory_pairs_each_imported_book_with_its_source_file(tmp_path
         (epub, "Book A"),
         (pdf, "Book B"),
     ]
+
+
+def test_iter_import_yields_before_and_after_each_attempted_file(tmp_path, library):
+    """A frontend showing progress needs to know which file is being
+    waited on, so a supported file announces itself before its lookup
+    and reports after; a skipped file is never waited on, so it reports
+    once."""
+    source_dir = tmp_path / "Source"
+    source_dir.mkdir()
+    epub = _make_epub(source_dir / "a.epub", title="Book A")
+    mobi = source_dir / "b.mobi"
+    mobi.write_bytes(b"BOOKMOBI")
+    (source_dir / ".DS_Store").write_bytes(b"junk")
+
+    events = list(library.iter_import(source_dir))
+
+    assert [(e.path, e.index, e.total) for e in events] == [
+        (epub, 1, 2),
+        (epub, 1, 2),
+        (mobi, 2, 2),
+    ]
+    assert events[0].outcome is None
+    assert isinstance(events[1].outcome, Book)
+    assert events[1].outcome.title == "Book A"
+    assert isinstance(events[2].outcome, UnsupportedFormatError)
+
+
+def test_iter_import_reports_a_failure_as_the_outcome_and_continues(tmp_path, library):
+    source_dir = tmp_path / "Source"
+    source_dir.mkdir()
+    bad = source_dir / "bad.epub"
+    bad.write_bytes(b"not a real zip file")
+    _make_epub(source_dir / "good.epub", title="Good Book")
+
+    outcomes = [e.outcome for e in library.iter_import(source_dir) if e.outcome is not None]
+
+    assert isinstance(outcomes[0], BadEpubError)
+    assert isinstance(outcomes[1], Book)
+
+
+def test_iter_import_checks_the_directory_on_the_call_not_the_first_pull(tmp_path, library):
+    with pytest.raises(FileNotFoundError):
+        library.iter_import(tmp_path / "missing")
+
+
+def test_batch_result_record_reproduces_import_directory(tmp_path, library):
+    """`record` is the one classification of an event, shared by
+    `import_directory` and any frontend that streams the batch itself."""
+    source_dir = tmp_path / "Source"
+    source_dir.mkdir()
+    _make_epub(source_dir / "a.epub", title="Book A")
+    (source_dir / "b.mobi").write_bytes(b"BOOKMOBI")
+    (source_dir / "c.epub").write_bytes(b"not a real zip file")
+
+    result = ImportBatchResult()
+    for event in library.iter_import(source_dir):
+        result.record(event)
+
+    assert [book.title for _, book in result.imported] == ["Book A"]
+    assert result.skipped == [source_dir / "b.mobi"]
+    assert [path for path, _ in result.failed] == [source_dir / "c.epub"]
+    assert result.conflicts == []
 
 
 def test_import_directory_reports_unsupported_files_as_skipped(tmp_path, library):

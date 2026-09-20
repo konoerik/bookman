@@ -346,7 +346,7 @@ title/author/isbn/needs_review; `bookman.config` (ADR-8).
 | I3 | Cover image | Browse view | ✅ | `Book.cover_path`; only fetched, never user-supplied (see K4) |
 | I4 | Evidence fields `identified` / `grouped` / `reviewed` / `needs_review` | Review queue, "why is this flagged" | ✅ | ADR-9 |
 | I5 | **Stable book identity** | Select, edit, refer to a book across calls; TUI list keys | ✅ | `Book.id`, a uuid4 hex minted at construction and stored in metadata.json v3 (ADR-17). Survives the folder rename K2 will do; a pre-v3 book gets a deterministic folder-derived id until its next save. `Book.directory` remains, as where the book lives and its display name |
-| I6 | Series / volume number | Sort volumes together, avoid C17-style merges | ❌ | Also the honest home for "Vol. 1" data instead of the title string |
+| I6 | Series / volume number | Sort volumes together, avoid C17-style merges | ❌ | Also the honest home for "Vol. 1" data instead of the title string. Settled 2026-09-20: the v1.0 answer for volumes is *separate and unmerged* (C17/F15); relating them is this row, post-1.0 |
 | I7 | Edition | Distinguish 1st/2nd editions (C7) | ❌ | |
 | I8 | Publisher, publication year, language, page count | Display, filter | ❌ | Open Library returns most of these; parsers see `dc:publisher`, `dc:language`, `dc:date` |
 | I9 | Description / blurb, subjects | Detail view | ❌ | Available from OL work records |
@@ -395,10 +395,10 @@ built yet: the review flag exists, the way to act on it doesn't.
 
 | ID | Operation | Why | Status | Public API / notes |
 |---|---|---|---|---|
-| L1 | Import one file / a directory (optionally recursive) | Core | ✅ | `import_file`, `import_directory(recursive=)` |
-| L2 | Batch result reporting: imported / failed / skipped | Tell the user what happened | ✅ | `ImportBatchResult`, exported from `bookman.__init__`; pinned by `test_public_api::batch_result_is_exported_from_the_package_root` |
-| L3 | Progress callback / streaming results | TUI progress bar on a 40-book bundle with network per book | ❌ | `import_directory` returns only when done |
-| L4 | Cancel an in-progress batch | TUI responsiveness | ❌ | Follows from L3's shape (generator or callback) |
+| L1 | Import one file / a directory (optionally recursive) | Core | ✅ | `import_file`, `import_directory(recursive=)`, `iter_import(recursive=)` |
+| L2 | Batch result reporting: imported / failed / skipped / conflicts | Tell the user what happened | ✅ | `ImportBatchResult`, exported from `bookman.__init__`; pinned by `test_public_api::batch_result_is_exported_from_the_package_root`. `ImportBatchResult.record(event)` is the one classification, shared by `import_directory` and a frontend that streams (ADR-25) |
+| L3 | Progress / streaming results | TUI progress bar on a 40-book bundle with network per book | ✅ | ADR-25: `Library.iter_import` yields an `ImportEvent(path, index, total, outcome)` before each attempted file (outcome None: "waiting on this one") and after it (`Book` / `FormatConflictError` / other exception); an unsupported file yields once with `UnsupportedFormatError`. `import_directory` collects the same events. `test_library::iter_import_*`, `batch_result_record_reproduces_import_directory`; the CLI prints `[i/n] name ... imported: …` as each file finishes, `test_cli::import_directory_prints_each_file_as_it_finishes` |
+| L4 | Cancel an in-progress batch | TUI responsiveness | ✅ | Stop iterating `iter_import`; files already imported stay, nothing else is touched (ADR-25). No test beyond the generator's nature — there is no state to clean up |
 | L5 | Dry run / preview: "here is what would happen" | Confidence before touching the library | ❌ | Needs identify + `_find_book` without the copy/save step |
 | L6 | Duplicate / already-imported detection | Re-running a bundle import shouldn't re-copy or clobber | 🔶 | Never clobbers now (F14, ADR-21): the same bytes re-import idempotently, a changed file is refused and reported. Still re-copies identical bytes and still runs the lookup for each; a hash (I11) would make both skippable |
 | L7 | Copy vs. move source files | Users who want the bundle folder gone | 🔶 💬 | Copy only (G10); a `move=` flag is cheap but changes the safety story |

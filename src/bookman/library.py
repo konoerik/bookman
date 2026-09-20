@@ -9,10 +9,16 @@ import filecmp
 import logging
 import re
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bookman.errors import CatalogError, FormatConflictError, MetadataSourceError
+from bookman.errors import (
+    CatalogError,
+    FormatConflictError,
+    MetadataSourceError,
+    UnsupportedFormatError,
+)
 from bookman.formats import is_supported, parser_for
 from bookman.formats.base import ParsedMetadata
 from bookman.identify.isbn import is_valid_isbn, normalize_isbn
@@ -51,6 +57,34 @@ class _Unset:
 _UNSET = _Unset()
 
 
+@dataclass(frozen=True)
+class ImportEvent:
+    """One step of a directory import, as `Library.iter_import` yields it.
+
+    Attributes:
+        path: The file this event is about.
+        index: 1-based position of `path` in the batch, in the order
+            files are attempted.
+        total: How many files the batch holds -- every non-hidden file
+            under the directory, supported or not -- so `index`/`total`
+            is a progress fraction known from the first event.
+        outcome: What happened to `path`. None means it is about to be
+            attempted -- the parse and the network lookup follow -- so a
+            frontend can show which file it is waiting on; the next
+            event for the same `path` carries the result. A `Book` means
+            it imported, and is the book as it stands after this file. A
+            `FormatConflictError` means it was refused (ADR-21). An
+            `UnsupportedFormatError` means it was skipped without being
+            attempted, so no None event precedes it. Any other exception
+            means it failed.
+    """
+
+    path: Path
+    index: int
+    total: int
+    outcome: Book | Exception | None = None
+
+
 @dataclass
 class ImportBatchResult:
     """The outcome of importing every supported file in a directory.
@@ -74,6 +108,29 @@ class ImportBatchResult:
     failed: list[tuple[Path, Exception]] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     conflicts: list[FormatConflictError] = field(default_factory=list)
+
+    def record(self, event: ImportEvent) -> None:
+        """File `event` under the attribute its outcome belongs to.
+
+        A "starting" event (outcome None) records nothing. This is how
+        `import_directory` builds its result from `iter_import`, and a
+        frontend that consumes `iter_import` itself can use it to end
+        up with the same summary.
+
+        Args:
+            event: An event yielded by `Library.iter_import`.
+        """
+        outcome = event.outcome
+        if outcome is None:
+            return
+        if isinstance(outcome, Book):
+            self.imported.append((event.path, outcome))
+        elif isinstance(outcome, FormatConflictError):
+            self.conflicts.append(outcome)
+        elif isinstance(outcome, UnsupportedFormatError):
+            self.skipped.append(event.path)
+        else:
+            self.failed.append((event.path, outcome))
 
 
 class Library:
@@ -217,16 +274,80 @@ class Library:
         self._persist(book, directory)
         return book
 
+    def iter_import(self, directory: Path, *, recursive: bool = False) -> Iterator[ImportEvent]:
+        """Import every supported file under `directory`, one event at a
+        time, so the caller can show progress while the batch runs.
+
+        The batch is `import_directory` with the loop turned inside out:
+        the same files in the same sorted order, each handed to
+        `import_file`, each failure caught and reported rather than
+        aborting the rest. A supported file yields twice -- once before
+        it is attempted (outcome None; the network lookup happens
+        between the two) and once with the result. A file with no
+        registered parser yields once, with an `UnsupportedFormatError`
+        outcome, and is never attempted; hidden files (a leading dot,
+        e.g. .DS_Store) are ignored entirely. Stopping the iteration
+        early leaves the files already imported in place and touches
+        nothing else.
+
+        Args:
+            directory: Directory to import from. Only files directly
+                inside it are considered unless `recursive` is set.
+            recursive: If True, also import matching files in
+                subdirectories. Defaults to False (top level only).
+
+        Returns:
+            An iterator of ImportEvent, in processing order.
+            `ImportBatchResult.record` turns them back into the summary
+            `import_directory` returns.
+
+        Raises:
+            FileNotFoundError: If `directory` does not exist. Raised on
+                the call, not on the first iteration.
+            NotADirectoryError: If `directory` exists but isn't a
+                directory.
+        """
+        if not directory.exists():
+            raise FileNotFoundError(directory)
+        if not directory.is_dir():
+            raise NotADirectoryError(directory)
+
+        candidates = directory.rglob("*") if recursive else directory.iterdir()
+        files = sorted(
+            path for path in candidates if path.is_file() and not path.name.startswith(".")
+        )
+        return self._import_events(files)
+
+    def _import_events(self, files: list[Path]) -> Iterator[ImportEvent]:
+        """The generator behind `iter_import`, split out so the argument
+        checks run when `iter_import` is called rather than when the
+        first event is pulled."""
+        total = len(files)
+        for index, path in enumerate(files, start=1):
+            if not is_supported(path):
+                unsupported = UnsupportedFormatError(f"no parser registered for {path.suffix!r}")
+                yield ImportEvent(path, index, total, unsupported)
+                continue
+            yield ImportEvent(path, index, total)
+            outcome: Book | Exception
+            try:
+                outcome = self.import_file(path)
+            except Exception as exc:
+                # One bad file must not abort the batch.
+                outcome = exc
+            yield ImportEvent(path, index, total, outcome)
+
     def import_directory(self, directory: Path, *, recursive: bool = False) -> ImportBatchResult:
         """Import every file with a registered format parser under `directory`.
 
-        Calls `import_file` once per matching file (in sorted path
-        order, for deterministic output). A single file's failure --
-        an unsupported format slipping through, a corrupt EPUB/PDF, or
-        an OSError writing its destination -- is caught and recorded
-        rather than aborting the batch, so one bad file in a bundle
-        doesn't block the rest (mirrors `scan`'s skip-and-continue
-        treatment of a bad metadata.json).
+        Runs `iter_import` to the end and collects its events into one
+        result: the convenience for a caller that doesn't need progress.
+        A single file's failure -- an unsupported format slipping
+        through, a corrupt EPUB/PDF, or an OSError writing its
+        destination -- is caught and recorded rather than aborting the
+        batch, so one bad file in a bundle doesn't block the rest
+        (mirrors `scan`'s skip-and-continue treatment of a bad
+        metadata.json).
 
         Args:
             directory: Directory to import from. Only files directly
@@ -247,28 +368,9 @@ class Library:
             NotADirectoryError: If `directory` exists but isn't a
                 directory.
         """
-        if not directory.exists():
-            raise FileNotFoundError(directory)
-        if not directory.is_dir():
-            raise NotADirectoryError(directory)
-
-        candidates = directory.rglob("*") if recursive else directory.iterdir()
-        files = sorted(
-            path for path in candidates if path.is_file() and not path.name.startswith(".")
-        )
-
         result = ImportBatchResult()
-        for path in files:
-            if not is_supported(path):
-                result.skipped.append(path)
-                continue
-            try:
-                result.imported.append((path, self.import_file(path)))
-            except FormatConflictError as conflict:
-                result.conflicts.append(conflict)
-            except Exception as exc:
-                # One bad file must not abort the batch.
-                result.failed.append((path, exc))
+        for event in self.iter_import(directory, recursive=recursive):
+            result.record(event)
         return result
 
     def scan(self) -> list[Book]:

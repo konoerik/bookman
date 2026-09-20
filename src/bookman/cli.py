@@ -28,7 +28,7 @@ from bookman.errors import (
     UnsupportedFormatError,
 )
 from bookman.formats import is_supported, supported_suffixes
-from bookman.library import ImportBatchResult, Library
+from bookman.library import ImportBatchResult, ImportEvent, Library
 from bookman.models import Book, MatchBasis
 
 _SUPPORTED = ", ".join(supported_suffixes())
@@ -297,9 +297,11 @@ def _cmd_config(explicit: Path | None) -> int:
 
 def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
     """Run `import`: dispatches to `Library.import_file` for a file or
-    `Library.import_directory` for a directory, and prints a one-line
-    summary per file (`imported: <title>` or `failed: <path>: <error>`)
-    under a header naming the source and destination.
+    `Library.iter_import` for a directory, printing each file's line as
+    its event arrives (`[3/41] foo.epub ... imported: <title>` or
+    `failed: <path>: <error>`) under a header naming the source and
+    destination, so a long batch shows what it is doing rather than
+    going quiet until the end.
 
     Args:
         root: Library root, as resolved from `--library`.
@@ -323,17 +325,10 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
     _header(f"Importing: {path}", f"Into:      {root.resolve()}")
 
     if path.is_dir():
-        result = library.import_directory(path, recursive=recursive)
-        for source, book in result.imported:
-            print(f"imported: {book.title} ({_describe_import(source, book)})")
-        for skipped_path in result.skipped:
-            print(f"skipped: {skipped_path} (unsupported format {skipped_path.suffix})")
-        sys.stdout.flush()
-        for conflict in result.conflicts:
-            print(_format_conflict(conflict), file=sys.stderr)
-        for failed_path, exc in result.failed:
-            print(f"failed: {failed_path}: {_describe(exc, failed_path)}", file=sys.stderr)
-        sys.stderr.flush()
+        result = ImportBatchResult()
+        for event in library.iter_import(path, recursive=recursive):
+            _print_event(event, path)
+            result.record(event)
         if not any((result.imported, result.failed, result.skipped, result.conflicts)):
             hint = "" if recursive else "; try --recursive"
             print(f"no {_SUPPORTED} files found in {path}{hint}")
@@ -439,6 +434,31 @@ def _rule() -> None:
 
 def _error(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
+
+
+def _print_event(event: ImportEvent, directory: Path) -> None:
+    """Print one `iter_import` event. A file's "starting" event opens
+    its line (`[3/41] foo.epub ...`, left unterminated and flushed, so
+    it is on screen during the lookup); the outcome event finishes it.
+    A success finishes it on stdout; a failure or refusal ends the
+    stdout line and reports on stderr, where the single-file path
+    already puts them.
+    """
+    label = f"[{event.index}/{event.total}] {event.path.relative_to(directory)} ..."
+    outcome = event.outcome
+    if outcome is None:
+        print(label, end="", flush=True)
+    elif isinstance(outcome, Book):
+        print(f" imported: {outcome.title} ({_describe_import(event.path, outcome)})", flush=True)
+    elif isinstance(outcome, UnsupportedFormatError):
+        print(f"{label} skipped (unsupported format {event.path.suffix})", flush=True)
+    else:
+        print(flush=True)
+        if isinstance(outcome, FormatConflictError):
+            print(_format_conflict(outcome), file=sys.stderr, flush=True)
+        else:
+            message = f"failed: {event.path}: {_describe(outcome, event.path)}"
+            print(message, file=sys.stderr, flush=True)
 
 
 def _describe_import(source: Path, book: Book) -> str:

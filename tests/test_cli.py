@@ -87,6 +87,49 @@ def test_import_directory_with_a_bad_file_returns_nonzero(tmp_path, capsys):
     assert "failed:" in captured.err
 
 
+def test_import_directory_prints_each_file_as_it_finishes(tmp_path, capsys, monkeypatch):
+    """A long batch must not go quiet until the end: the line for a file
+    is on screen before the next file is attempted, and the file being
+    waited on is named while its lookup runs."""
+    library_root = tmp_path / "Library"
+    source_dir = tmp_path / "Source"
+    source_dir.mkdir()
+    _make_epub(source_dir / "a.epub", title="Book A")
+    _make_epub(source_dir / "b.epub", title="Book B")
+    seen_before_second: list[str] = []
+    original = Library.import_file
+
+    def spy(self, path):
+        if path.name == "b.epub":
+            seen_before_second.append(capsys.readouterr().out)
+        return original(self, path)
+
+    monkeypatch.setattr(Library, "import_file", spy)
+
+    cli.main(["-l", str(library_root), "import", str(source_dir)])
+
+    [out] = seen_before_second
+    assert "[1/2] a.epub ... imported: Book A (epub)" in out
+    assert out.endswith("[2/2] b.epub ...")
+    assert "Book B" not in out
+
+
+def test_import_directory_ends_the_progress_line_before_a_failure(tmp_path, capsys):
+    """The failure goes to stderr; the half-written stdout line must be
+    terminated so the next file's line doesn't join it."""
+    library_root = tmp_path / "Library"
+    source_dir = tmp_path / "Source"
+    source_dir.mkdir()
+    (source_dir / "bad.epub").write_bytes(b"not a real zip file")
+    _make_epub(source_dir / "good.epub", title="Good Book")
+
+    cli.main(["-l", str(library_root), "import", str(source_dir)])
+
+    out, err = capsys.readouterr()
+    assert "[1/2] bad.epub ...\n[2/2] good.epub ... imported: Good Book (epub)\n" in out
+    assert "failed:" in err
+
+
 def test_import_directory_recursive_flag_is_forwarded(tmp_path, capsys):
     library_root = tmp_path / "Library"
     source_dir = tmp_path / "Source"
@@ -418,8 +461,8 @@ def test_import_directory_names_the_format_of_each_file(tmp_path, capsys):
 
     assert code == 0
     lines = capsys.readouterr().out.splitlines()
-    assert "imported: Deep Work (epub)" in lines
-    assert "imported: Deep Work (pdf, grouped with epub)" in lines
+    assert "[1/2] a.epub ... imported: Deep Work (epub)" in lines
+    assert "[2/2] b.pdf ... imported: Deep Work (pdf, grouped with epub)" in lines
 
 
 def test_import_directory_reports_skipped_unsupported_files(tmp_path, capsys):
@@ -434,7 +477,7 @@ def test_import_directory_reports_skipped_unsupported_files(tmp_path, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert f"skipped: {mobi} (unsupported format .mobi)" in out
+    assert "[2/2] a.mobi ... skipped (unsupported format .mobi)" in out
     assert "1 imported, 0 failed, 1 skipped" in out
 
 

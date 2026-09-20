@@ -25,3 +25,5 @@ def test_batch_result_is_exported_from_the_package_root():
     `bookman.library` for the type `import_directory` hands back."""
     assert "ImportBatchResult" in bookman.__all__
     assert bookman.ImportBatchResult is library.ImportBatchResult
+    assert "ImportEvent" in bookman.__all__
+    assert bookman.ImportEvent is library.ImportEvent
