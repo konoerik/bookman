@@ -84,9 +84,7 @@ def test_edit_survives_a_later_import_of_another_format(tmp_path, library, sourc
     assert book.identified is None
 
     source.record = Candidate(title="Dune", author="Someone Else", cover_url=None)
-    library.import_file(
-        _make_pdf(tmp_path / "b.pdf", title="Dune", text=f"ISBN {VALID_ISBN13}")
-    )
+    library.import_file(_make_pdf(tmp_path / "b.pdf", title="Dune", text=f"ISBN {VALID_ISBN13}"))
 
     saved = library.scan()[0]
     assert saved.author == "The Real Author"

@@ -297,9 +297,7 @@ def test_identify_drops_a_stand_in_author_even_when_nothing_matches(source):
 
 
 def test_identify_title_only_match_keeps_the_files_author(source):
-    junk = Candidate(
-        title="Lazarillo de Tormes", author="A. Bel, F. Chevalier", cover_url=None
-    )
+    junk = Candidate(title="Lazarillo de Tormes", author="A. Bel, F. Chevalier", cover_url=None)
     source.results = [junk]
 
     found = identify(_parsed(title="Lazarillo de Tormes", author="Anonymous"), source)

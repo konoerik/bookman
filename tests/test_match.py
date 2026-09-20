@@ -278,7 +278,10 @@ def test_match_basis_same_isbn_with_title_disagreeing_but_author_agreeing_is_isb
     # ... unless the author vouches for it (spec row 2).
     assert (
         match_basis(
-            "Deep Work", "Cal Newport", "So Good They Can't Ignore You", "Cal Newport",
+            "Deep Work",
+            "Cal Newport",
+            "So Good They Can't Ignore You",
+            "Cal Newport",
             same_isbn=True,
         )
         == MatchBasis.ISBN

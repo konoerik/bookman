@@ -131,7 +131,9 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         if basis is not None:
             _log.debug(
                 "IDENT-3 accepted ISBN %s record %r (%s)",
-                file_isbn, record.title, basis.value,
+                file_isbn,
+                record.title,
+                basis.value,
             )
             return _accepted(parsed, record, file_isbn, basis)
         # IDENT-3: the record contradicts the file, so this ISBN isn't
@@ -139,16 +141,23 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         # positive cannot seed an ISBN-based join later (GROUP-1).
         _log.info(
             "IDENT-3 rejected ISBN %s: record %r by %r contradicts file %r by %r",
-            file_isbn, record.title, record.author, parsed.title, parsed.author,
+            file_isbn,
+            record.title,
+            record.author,
+            parsed.title,
+            parsed.author,
         )
 
     # IDENT-4: a placeholder title is not worth searching on.
     file_title = parsed.title
     if file_title and is_usable_title(file_title):
         # IDENT-5: candidates are proposals; each must pass MATCH on its own.
-        candidates = _safe(
-            lambda: source.search(file_title, parsed.author), f"IDENT-5 search {file_title!r}"
-        ) or []
+        candidates = (
+            _safe(
+                lambda: source.search(file_title, parsed.author), f"IDENT-5 search {file_title!r}"
+            )
+            or []
+        )
         best: tuple[Candidate, MatchBasis] | None = None
         for record in candidates:
             basis = match_basis(parsed.title, parsed.author, record.title, record.author)
@@ -160,12 +169,15 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
             record, basis = best
             _log.debug(
                 "IDENT-5 accepted search hit %r (%s) for %r",
-                record.title, basis.value, file_title,
+                record.title,
+                basis.value,
+                file_title,
             )
             return _accepted(parsed, best[0], isbn, best[1])
         _log.info(
             "IDENT-5 no agreeing record among %d candidates for %r",
-            len(candidates), file_title,
+            len(candidates),
+            file_title,
         )
 
     return Identification(

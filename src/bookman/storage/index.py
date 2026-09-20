@@ -36,8 +36,7 @@ CREATE TABLE books (
 )
 """
 _UPSERT = (
-    "INSERT OR REPLACE INTO books (name, title, author, isbn, needs_review) "
-    "VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO books (name, title, author, isbn, needs_review) VALUES (?, ?, ?, ?, ?)"
 )
 
 

@@ -32,8 +32,9 @@ uv run pytest
 # Run tests with coverage
 uv run pytest --cov
 
-# Lint and type-check
+# Lint, format-check and type-check
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy src/
 ```
 
