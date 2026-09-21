@@ -4,22 +4,8 @@
 <!-- Current sprint items. Keep this short — 5-10 items max.
      If it grows beyond that, move lower-priority items to Backlog. -->
 
-v1.0 scope is complete. Remaining before release (in this order):
+v1.0.0 is released. Post-1.0 work, in this order:
 
-- ~~GitHub-ready beyond the basics~~ — done 2026-09-20, uncommitted:
-  `release.yml`, 1.0.0, Production/Stable, CHANGELOG rolled,
-  CONTRIBUTING, issue template.
-- ~~Versioned wheel~~ — `uv build` verified 2026-09-20 (installs clean,
-  imports a real pair). Lands on GitHub as a Release asset when `v1.0.0`
-  is tagged and pushed. PyPI later.
-- ~~Review, commit, push; tag `v1.0.0`; confirm the Release~~ — **v1.0.0
-  released 2026-09-20**: https://github.com/konoerik/bookman/releases/tag/v1.0.0
-  carries the wheel; installed from that URL into a clean venv. The
-  `v0.1.0` tag was deleted (never had a Release) so 1.0.0 is the first.
-  The tag was then moved onto the housekeeping commit (CHANGELOG folds
-  0.1.0 into 1.0.0; the asset glob no longer picks up `dist/.gitignore`)
-  so the first release is clean. The stray `default.gitignore` asset
-  from the first run wants deleting by hand in the Release UI.
 - **More real bundles** (Humble Bundle) — run each into a scratch
   library; log shapes in `docs/FIELD-NOTES.md`; fix only what a pattern
   justifies. Candidates already waiting on more data: FN-4's PDF-first
@@ -30,9 +16,9 @@ v1.0 scope is complete. Remaining before release (in this order):
   import with progress → read the catalog → what `Book` fields mean →
   curate → errors → plug in a `MetadataSource`), with `cli.py` cited as
   the worked example. Docstrings stay the per-signature reference. Add a
-  test that every `bookman.__all__` name is mentioned in it. Writing it
-  is the final API review before the surface freezes.
-- `/prep`, then `/release`.
+  test that every `bookman.__all__` name is mentioned in it.
+- `/prep`, then `/release` — gates for the next tagged version (1.x
+  minor for any public-API change, patch otherwise).
 
 ## Backlog
 <!-- Accepted but not yet active. Load this section only when planning or prioritizing. -->
@@ -49,6 +35,7 @@ v1.0 scope is complete. Remaining before release (in this order):
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- **v1.0.0 released** (2026-09-20): https://github.com/konoerik/bookman/releases/tag/v1.0.0 — wheel + sdist, installed from the Release URL into a clean venv. `v0.1.0` tag deleted (never had a Release) so 1.0.0 is the first; tag moved once onto the housekeeping commit `3c22a50` (CHANGELOG folds 0.1.0 into 1.0.0; asset glob `*.whl`/`*.tar.gz` only); stray `default.gitignore` asset removed by hand. Tag moves are classified destructive in auto mode — the user runs them.
 - Release plumbing (2026-09-20): `.github/workflows/release.yml` on `v*` tags — checks, `uv build`, tag-matches-version guard, clean-venv smoke test, GitHub Release with sdist + wheel; version 1.0.0, classifier Production/Stable, CHANGELOG `[1.0.0]`; `CONTRIBUTING.md` (uv-only, spec-first rule, bug reports as shapes); issue template for wrong match / missed grouping / missing cover; README install via Release wheel; Makefile `check`/`build`. Wheel built and smoke-tested locally.
 - First real bundle (2026-09-20): 37 No Starch/O'Reilly titles, 92 files, imported in four batches then whole. Four fixes — PDF ISBN scan 5 → 10 pages (B8), placeholder title → stem (A12), any-ISBN join + same-ISBN upgrade gate (ADR-26/27, F17/F18), EPUB embedded cover fallback (ADR-28, E15). Went from 7 split pairs and 16 covers to 0 and 37. `docs/FIELD-NOTES.md` started (FN-1..10). 485 tests.
 - Import progress (2026-09-20, ADR-25): `Library.iter_import` yields an `ImportEvent` before and after each file; `import_directory` collects them via `ImportBatchResult.record`; stopping the iteration cancels. CLI prints `[i/n] name ... imported: …` per file. FEATURES L3/L4 ✅. 467 tests. Surfaced that `__init__.py` is a namespace, not a guide — `docs/API.md` added to Active.
