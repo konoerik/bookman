@@ -64,7 +64,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
           generate_release_notes: false
           body: |
             See [CHANGELOG.md](https://github.com/konoerik/bookman/blob/${{ github.ref_name }}/CHANGELOG.md) for what changed.

@@ -8,11 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [1.0.0] - 2026-09-20
 
-The first release that has been through a real bundle: 37 No Starch and
-O'Reilly titles imported, every EPUB+PDF pair grouped, every book with a
-cover (see `docs/FIELD-NOTES.md`). The public API in `bookman.__all__`
-is now frozen under semantic versioning. MOBI files are recognized and
-reported as skipped, not parsed.
+First release. EPUB and PDF parsing, ISBN extraction, Open Library lookup
+and title/author search behind a `MetadataSource` protocol, an
+evidence-based match rule for identification and grouping, a flat
+title-named library layout with `metadata.json` per book, a sqlite search
+index, persisted library config, and the `bookman init` / `import` /
+`list` / `search` / `config` CLI. MOBI files are recognized and reported
+as skipped, not parsed.
+
+Shipped after a real bundle went through it: 37 No Starch and O'Reilly
+titles imported, every EPUB+PDF pair grouped, every book with a cover
+(see `docs/FIELD-NOTES.md`). The public API in `bookman.__all__` is
+frozen from here under semantic versioning.
+
+The sections below record what changed during development, since the
+ADRs in `docs/ARCHITECTURE.md` refer to them.
 
 ### Added
 - The EPUB's own embedded cover is used when identification supplies
@@ -164,16 +174,5 @@ reported as skipped, not parsed.
   by scanning text (PDF) rather than in a metadata field (EPUB);
   `match_basis` takes a matching `isbn_scraped` keyword.
 
-## [0.1.0] - 2026-09-16
-
-### Added
-- Initial release: EPUB and PDF parsing, ISBN extraction, Open Library
-  lookup and title/author search behind a `MetadataSource` protocol, an
-  evidence-based match rule for identification and grouping, a flat
-  title-named library layout with `metadata.json` per book, a sqlite search
-  index, persisted library config, and the `bookman init` / `import` /
-  `list` / `search` / `config` CLI.
-
 [Unreleased]: https://github.com/konoerik/bookman/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/konoerik/bookman/compare/v0.1.0...v1.0.0
-[0.1.0]: https://github.com/konoerik/bookman/releases/tag/v0.1.0
+[1.0.0]: https://github.com/konoerik/bookman/releases/tag/v1.0.0

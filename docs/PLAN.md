@@ -12,8 +12,14 @@ v1.0 scope is complete. Remaining before release (in this order):
 - ~~Versioned wheel~~ — `uv build` verified 2026-09-20 (installs clean,
   imports a real pair). Lands on GitHub as a Release asset when `v1.0.0`
   is tagged and pushed. PyPI later.
-- **Review, commit, push** the above; tag `v1.0.0`; confirm the Release
-  workflow produced the wheel.
+- ~~Review, commit, push; tag `v1.0.0`; confirm the Release~~ — **v1.0.0
+  released 2026-09-20**: https://github.com/konoerik/bookman/releases/tag/v1.0.0
+  carries the wheel; installed from that URL into a clean venv. The
+  `v0.1.0` tag was deleted (never had a Release) so 1.0.0 is the first.
+  The tag was then moved onto the housekeeping commit (CHANGELOG folds
+  0.1.0 into 1.0.0; the asset glob no longer picks up `dist/.gitignore`)
+  so the first release is clean. The stray `default.gitignore` asset
+  from the first run wants deleting by hand in the Release UI.
 - **More real bundles** (Humble Bundle) — run each into a scratch
   library; log shapes in `docs/FIELD-NOTES.md`; fix only what a pattern
   justifies. Candidates already waiting on more data: FN-4's PDF-first
