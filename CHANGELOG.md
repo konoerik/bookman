@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-20
+
+The first release that has been through a real bundle: 37 No Starch and
+O'Reilly titles imported, every EPUB+PDF pair grouped, every book with a
+cover (see `docs/FIELD-NOTES.md`). The public API in `bookman.__all__`
+is now frozen under semantic versioning. MOBI files are recognized and
+reported as skipped, not parsed.
+
 ### Added
 - The EPUB's own embedded cover is used when identification supplies
   none — no Open Library record, a record without a cover, or a failed
@@ -166,5 +174,6 @@ All notable changes to this project are documented here. The format follows
   index, persisted library config, and the `bookman init` / `import` /
   `list` / `search` / `config` CLI.
 
-[Unreleased]: https://github.com/konoerik/bookman/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/konoerik/bookman/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/konoerik/bookman/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/konoerik/bookman/releases/tag/v0.1.0

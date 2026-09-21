@@ -6,13 +6,14 @@
 
 v1.0 scope is complete. Remaining before release (in this order):
 
-- **GitHub-ready beyond the basics** — release workflow that builds the
-  wheel on a `v*` tag and attaches it to a GitHub Release; classifier
-  `3 - Alpha` → `5 - Production/Stable`; version `0.1.0` → `1.0.0` with
-  the CHANGELOG `[Unreleased]` rolled over; issue templates / a
-  CONTRIBUTING note if cheap.
-- **Versioned wheel** — `uv build`, so the TUI project can depend on a
-  GitHub Release asset until PyPI. PyPI itself is later.
+- ~~GitHub-ready beyond the basics~~ — done 2026-09-20, uncommitted:
+  `release.yml`, 1.0.0, Production/Stable, CHANGELOG rolled,
+  CONTRIBUTING, issue template.
+- ~~Versioned wheel~~ — `uv build` verified 2026-09-20 (installs clean,
+  imports a real pair). Lands on GitHub as a Release asset when `v1.0.0`
+  is tagged and pushed. PyPI later.
+- **Review, commit, push** the above; tag `v1.0.0`; confirm the Release
+  workflow produced the wheel.
 - **More real bundles** (Humble Bundle) — run each into a scratch
   library; log shapes in `docs/FIELD-NOTES.md`; fix only what a pattern
   justifies. Candidates already waiting on more data: FN-4's PDF-first
@@ -42,6 +43,7 @@ v1.0 scope is complete. Remaining before release (in this order):
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- Release plumbing (2026-09-20): `.github/workflows/release.yml` on `v*` tags — checks, `uv build`, tag-matches-version guard, clean-venv smoke test, GitHub Release with sdist + wheel; version 1.0.0, classifier Production/Stable, CHANGELOG `[1.0.0]`; `CONTRIBUTING.md` (uv-only, spec-first rule, bug reports as shapes); issue template for wrong match / missed grouping / missing cover; README install via Release wheel; Makefile `check`/`build`. Wheel built and smoke-tested locally.
 - First real bundle (2026-09-20): 37 No Starch/O'Reilly titles, 92 files, imported in four batches then whole. Four fixes — PDF ISBN scan 5 → 10 pages (B8), placeholder title → stem (A12), any-ISBN join + same-ISBN upgrade gate (ADR-26/27, F17/F18), EPUB embedded cover fallback (ADR-28, E15). Went from 7 split pairs and 16 covers to 0 and 37. `docs/FIELD-NOTES.md` started (FN-1..10). 485 tests.
 - Import progress (2026-09-20, ADR-25): `Library.iter_import` yields an `ImportEvent` before and after each file; `import_directory` collects them via `ImportBatchResult.record`; stopping the iteration cancels. CLI prints `[i/n] name ... imported: …` per file. FEATURES L3/L4 ✅. 467 tests. Surfaced that `__init__.py` is a namespace, not a guide — `docs/API.md` added to Active.
 - Ruff format enforced (2026-09-20): five drifted files reformatted; `ruff format --check` added to CI and the CLAUDE.md workflow, which had only run `ruff check`.

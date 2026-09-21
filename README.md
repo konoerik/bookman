@@ -12,10 +12,15 @@ consumes it as a frontend.
 
 ## Install
 
-Requires Python 3.10+.
+Requires Python 3.10+. Not on PyPI yet — install the wheel attached to a
+[GitHub Release](https://github.com/konoerik/bookman/releases):
 
 ```bash
-uv tool install bookman   # or: pipx install bookman / pip install bookman
+# as a command-line tool
+uv tool install "https://github.com/konoerik/bookman/releases/download/v1.0.0/bookman-1.0.0-py3-none-any.whl"
+
+# as a dependency of your own project
+uv add "bookman @ https://github.com/konoerik/bookman/releases/download/v1.0.0/bookman-1.0.0-py3-none-any.whl"
 ```
 
 ## Usage
@@ -116,8 +121,15 @@ uv sync                # editable install with dev extras
 uv run pytest          # tests (no network access needed)
 uv run pytest --cov
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy src/
+uv build               # sdist + wheel into dist/
 ```
+
+Releasing is tagging: `git tag v<version> && git push origin v<version>`
+runs the checks, builds the wheel and publishes a GitHub Release with it
+(`.github/workflows/release.yml`). See `CONTRIBUTING.md` for the
+spec-first rule that governs changes to identification and grouping.
 
 The `Makefile` wraps these and adds targets for a throwaway dev library
 under `.dev/` (`make init`, `make import SRC=...`, `make list`, `make

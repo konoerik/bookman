@@ -1,4 +1,4 @@
-.PHONY: install test test-cov lint typecheck init import list clean-dev
+.PHONY: install test test-cov lint format typecheck check build init import list clean-dev
 
 install:
 	uv sync
@@ -12,8 +12,17 @@ test-cov:
 lint:
 	uv run ruff check .
 
+format:
+	uv run ruff format --check .
+
 typecheck:
 	uv run mypy src/
+
+check: lint format typecheck test
+
+build:
+	rm -rf dist
+	uv build
 
 # --- Local dev library ------------------------------------------------------
 # Everything lives under .dev/ (gitignored). BOOKMAN_CONFIG keeps the dev

@@ -1,7 +1,7 @@
 [project]
 name = "bookman"
-version = "0.1.0"
-description = "Local ebook library management: identify, catalog, and organize EPUB and PDF files by title, independent of any frontend."
+version = "1.0.0"
+description = "Local ebook library management: identify, catalog, and organize EPUB and PDF files by title, grouping the formats of one book, independent of any frontend."
 readme = "README.md"
 authors = [
     { name = "Erikton Konomi", email = "konoerik@gmail.com" }
@@ -11,7 +11,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 keywords = ["ebook", "epub", "pdf", "library", "metadata", "open-library"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: OS Independent",
