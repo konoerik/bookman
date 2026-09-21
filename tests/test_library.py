@@ -238,6 +238,8 @@ def test_import_file_keeps_volumes_of_a_set_as_separate_books(tmp_path, library)
 def test_import_file_keeps_placeholder_titled_files_as_separate_books(tmp_path, library, source):
     # FEATURES A12: two unrelated documents a converter left titled
     # "Untitled" are not one book, however identical those titles are.
+    # IDENT-4: a placeholder names nothing, so each is shelved under its
+    # own filename stem (A4/A8) rather than a folder called "Untitled".
     source.results = []
 
     library.import_file(_make_epub(tmp_path / "a.epub", title="Untitled", author=None))
@@ -246,10 +248,8 @@ def test_import_file_keeps_placeholder_titled_files_as_separate_books(tmp_path, 
     books = library.scan()
     assert len(books) == 2
     assert all(len(book.formats) == 1 for book in books)
-    assert sorted(book.formats[0].path.parent.name for book in books) == [
-        "Untitled",
-        "Untitled (2)",
-    ]
+    assert sorted(book.formats[0].path.parent.name for book in books) == ["a", "b"]
+    assert sorted(book.title for book in books) == ["a", "b"]
 
 
 def test_import_file_keeps_generic_titled_files_as_separate_books(tmp_path, library, source):
@@ -485,6 +485,96 @@ def test_import_file_falls_back_when_cover_fetch_fails(tmp_path, library, source
     assert book.identified == MatchBasis.ISBN
     assert book.author == "Resolved Author"
     assert book.cover_path is None
+
+
+# --- E15: the EPUB's own cover when identification supplies none (ADR-28) --
+
+EMBEDDED = b"\xff\xd8\xff\xe0 embedded"
+
+
+def test_import_file_uses_the_epubs_embedded_cover_when_there_is_no_record(
+    tmp_path, library, source
+):
+    source.record = None
+    source.results = []
+
+    book = library.import_file(_make_epub(tmp_path / "book.epub", cover=EMBEDDED))
+
+    assert book.identified is None
+    assert book.cover_path is not None
+    assert book.cover_path.read_bytes() == EMBEDDED
+
+
+def test_import_file_uses_the_embedded_cover_when_the_record_has_none(tmp_path, library, source):
+    source.record = Candidate(title="A Title", author="Someone", cover_url=None)
+    epub = _make_epub(
+        tmp_path / "book.epub", identifiers=[f"urn:isbn:{VALID_ISBN13}"], cover=EMBEDDED
+    )
+
+    book = library.import_file(epub)
+
+    assert book.identified == MatchBasis.ISBN
+    assert book.cover_path is not None and book.cover_path.read_bytes() == EMBEDDED
+
+
+def test_import_file_uses_the_embedded_cover_when_the_download_fails(tmp_path, library, source):
+    source.record = Candidate(title="A Title", author="Someone", cover_url="https://x/c.jpg")
+    source.cover = None
+    epub = _make_epub(
+        tmp_path / "book.epub", identifiers=[f"urn:isbn:{VALID_ISBN13}"], cover=EMBEDDED
+    )
+
+    book = library.import_file(epub)
+
+    assert book.cover_path is not None and book.cover_path.read_bytes() == EMBEDDED
+
+
+def test_import_file_prefers_the_records_cover_to_the_embedded_one(tmp_path, library, source):
+    source.record = Candidate(title="A Title", author="Someone", cover_url="https://x/c.jpg")
+    source.cover = b"from the record"
+    epub = _make_epub(
+        tmp_path / "book.epub", identifiers=[f"urn:isbn:{VALID_ISBN13}"], cover=EMBEDDED
+    )
+
+    book = library.import_file(epub)
+
+    assert book.cover_path is not None and book.cover_path.read_bytes() == b"from the record"
+
+
+def test_import_file_follow_up_epub_fills_a_missing_cover_but_keeps_an_existing_one(
+    tmp_path, library, source
+):
+    source.record = None
+    source.results = []
+    pdf = _make_pdf(
+        tmp_path / "book.pdf", title="A Title", author="Someone", text=f"ISBN {VALID_ISBN13}"
+    )
+    first = library.import_file(pdf)
+    assert first.cover_path is None
+
+    epub = _make_epub(
+        tmp_path / "book.epub",
+        author="Someone",
+        identifiers=[f"urn:isbn:{VALID_ISBN13}"],
+        cover=EMBEDDED,
+    )
+    book = library.import_file(epub)
+    assert book.grouped == MatchBasis.ISBN
+    assert book.cover_path is not None and book.cover_path.read_bytes() == EMBEDDED
+
+    # And the other way round: a book that has a cover keeps it.
+    source.results = [Candidate(title="Other", author="Someone", cover_url="https://x/o.jpg")]
+    source.cover = b"from the record"
+    other_pdf = _make_pdf(tmp_path / "other.pdf", title="Other", author="Someone")
+    with_cover = library.import_file(other_pdf)
+    assert with_cover.cover_path is not None
+    source.results = []
+    other_epub = _make_epub(
+        tmp_path / "other.epub", title="Other", author="Someone", cover=EMBEDDED
+    )
+    book = library.import_file(other_epub)
+    assert book.id == with_cover.id
+    assert book.cover_path is not None and book.cover_path.read_bytes() == b"from the record"
 
 
 def _mark_reviewed(library, book, **corrections):
@@ -989,6 +1079,116 @@ def test_import_order_does_not_change_the_end_state(tmp_path, source):
         )
 
     assert state(a) == state(b)
+
+
+# --- F17/F18: several ISBNs on one copyright page (ADR-26, ADR-27) ------
+
+PRINT_ISBN, EBOOK_ISBN, PRIOR_EDITION_ISBN = "9781718504127", "9781718504134", "9781593278281"
+
+
+def test_import_file_joins_on_any_isbn_the_file_carries(tmp_path, library, source):
+    # F17 / FN-4: the EPUB asserts the ebook number; the PDF scrapes
+    # print then ebook and is identified by the print one (the first the
+    # source knows). The shared ebook number must still join them.
+    source.records = {
+        PRINT_ISBN: Candidate(title="Effective C", author="Robert C. Seacord", cover_url=None)
+    }
+    source.results = []
+
+    epub = _make_epub(
+        tmp_path / "book.epub",
+        title="Effective C",
+        author="Robert C. Seacord",
+        identifiers=[f"urn:isbn:{EBOOK_ISBN}"],
+    )
+    library.import_file(epub)
+    pdf = _make_pdf(
+        tmp_path / "book.pdf",
+        title="Effective C, 2nd Edition",
+        author="Robert C. Seacord",
+        text=f"ISBN {PRINT_ISBN} ISBN {EBOOK_ISBN}",
+    )
+
+    book = library.import_file(pdf)
+
+    assert sorted(fmt.kind for fmt in book.formats) == [FormatKind.EPUB, FormatKind.PDF]
+    assert book.grouped == MatchBasis.ISBN
+    assert len(library.scan()) == 1
+
+
+def test_import_file_on_an_isbn_join_declines_a_record_reached_through_another_isbn(
+    tmp_path, library, source
+):
+    # F18 / FN-4: a title-less PDF cites the previous edition's ISBN and
+    # the source knows only that one. It joins the EPUB's book on the
+    # shared 3rd-edition number, but must not rename the book to the
+    # 2nd-edition record or fetch its cover.
+    source.records = {
+        PRIOR_EDITION_ISBN: Candidate(
+            title="The Rust Programming Language", author="Steve Klabnik", cover_url="2nd.jpg"
+        )
+    }
+    source.results = []
+    source.cover = b"png"
+
+    epub = _make_epub(
+        tmp_path / "book.epub",
+        title="The Rust Programming Language, 3rd Edition",
+        author="Steve Klabnik",
+        identifiers=[f"urn:isbn:{EBOOK_ISBN}"],
+    )
+    first = library.import_file(epub)
+    assert first.identified is None
+    pdf = _make_pdf(
+        tmp_path / "book.pdf",
+        title=None,
+        author=None,
+        text=f"ISBN {EBOOK_ISBN} ISBN {PRIOR_EDITION_ISBN}",
+    )
+
+    book = library.import_file(pdf)
+
+    assert sorted(fmt.kind for fmt in book.formats) == [FormatKind.EPUB, FormatKind.PDF]
+    assert book.grouped == MatchBasis.ISBN
+    assert book.title == "The Rust Programming Language, 3rd Edition"
+    assert book.isbn == EBOOK_ISBN
+    assert book.identified is None
+    assert book.cover_path is None
+    assert not source.called("fetch_cover")
+
+
+def test_import_file_on_an_isbn_join_adopts_a_record_reached_through_the_joined_isbn(
+    tmp_path, library, source
+):
+    # The other half of F18: the follow-up's record answers to the very
+    # ISBN it joined on, so it is this book's and upgrades it (F7).
+    source.record = None
+    source.results = []
+    source.cover = b"png"
+
+    epub = _make_epub(
+        tmp_path / "book.epub",
+        title="Effective C",
+        author="Robert C. Seacord",
+        identifiers=[f"urn:isbn:{EBOOK_ISBN}"],
+    )
+    first = library.import_file(epub)
+    assert first.identified is None
+    source.records[EBOOK_ISBN] = Candidate(
+        title="Effective C", author="Robert C. Seacord", cover_url="c.jpg"
+    )
+    pdf = _make_pdf(
+        tmp_path / "book.pdf",
+        title="Effective C",
+        author="Robert C. Seacord",
+        text=f"ISBN {PRINT_ISBN} ISBN {EBOOK_ISBN}",
+    )
+
+    book = library.import_file(pdf)
+
+    assert book.grouped == MatchBasis.ISBN
+    assert book.identified == MatchBasis.ISBN
+    assert book.cover_path is not None
 
 
 # --- F14: one file per format kind (spec GROUP-4, ADR-21) ----------------

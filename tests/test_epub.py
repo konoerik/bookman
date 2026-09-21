@@ -2,8 +2,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from helpers import make_epub
 
-from bookman.formats.epub import BadEpubError, parse_epub
+from bookman.formats.epub import BadEpubError, extract_cover, parse_epub
 
 CONTAINER_XML = b"""<?xml version="1.0"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
@@ -111,3 +112,38 @@ def test_parse_epub_missing_opf_raises_bad_epub_error(tmp_path):
     epub = _make_epub(tmp_path / "book.epub", include_opf=False)
     with pytest.raises(BadEpubError):
         parse_epub(epub)
+
+
+# --- extract_cover (ADR-28) -----------------------------------------------
+
+JPEG = b"\xff\xd8\xff\xe0 not really a jpeg"
+
+
+@pytest.mark.parametrize("declared", ["properties", "meta", "id"])
+def test_extract_cover_reads_the_declared_cover_image(tmp_path, declared):
+    # The three ways the first real bundle declared a cover: EPUB 3
+    # properties="cover-image", EPUB 2 <meta name="cover">, and a
+    # manifest item merely called "cover".
+    epub = make_epub(tmp_path / "b.epub", cover=JPEG, cover_declared=declared)
+    assert extract_cover(epub) == JPEG
+
+
+def test_extract_cover_returns_none_when_nothing_is_declared(tmp_path):
+    epub = make_epub(tmp_path / "b.epub")
+    assert extract_cover(epub) is None
+
+
+def test_extract_cover_returns_none_when_the_declared_member_is_missing(tmp_path):
+    epub = make_epub(tmp_path / "b.epub", cover=JPEG)
+    with zipfile.ZipFile(epub) as zf:
+        members = {n: zf.read(n) for n in zf.namelist() if not n.endswith(".jpg")}
+    with zipfile.ZipFile(epub, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    assert extract_cover(epub) is None
+
+
+def test_extract_cover_never_raises_for_an_unreadable_file(tmp_path):
+    bad = tmp_path / "b.epub"
+    bad.write_bytes(b"not a zip")
+    assert extract_cover(bad) is None

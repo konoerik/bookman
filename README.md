@@ -2,7 +2,8 @@
 
 A local ebook library manager. Point it at a folder of purchased ebook files
 (EPUB/PDF bundles from Humble Bundle and the like), and it identifies each
-book, fetches metadata and cover art from [Open Library](https://openlibrary.org/),
+book, fetches metadata and cover art from [Open Library](https://openlibrary.org/)
+(falling back to the cover embedded in the EPUB),
 and files everything into a flat, title-named library — grouping the EPUB and
 PDF of the same book under one folder.
 

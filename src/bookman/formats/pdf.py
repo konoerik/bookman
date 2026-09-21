@@ -14,7 +14,11 @@ from bookman.errors import ParseError
 from bookman.formats.base import ParsedMetadata
 from bookman.identify.isbn import extract_isbns
 
-_ISBN_SCAN_PAGES = 5
+# Where the copyright page can sit. A real bundle put the ISBN as far
+# back as page index 7 (O'Reilly) and at index 5 on every No Starch
+# title -- cover, blank, half-title, blank, title page, copyright -- so
+# the first five pages missed nearly all of them (FEATURES B8).
+_ISBN_SCAN_PAGES = 10
 _PYPDF_LOGGER = "pypdf"
 
 

@@ -82,7 +82,22 @@ class FakeSource:
         return any(call[0] == method for call in self.calls)
 
 
-def opf_xml(*, title: str | None = None, author: str | None = None, identifiers=()) -> bytes:
+COVER_MEMBER = "images/front.jpg"  # relative to the OPF, as hrefs are
+
+
+def opf_xml(
+    *,
+    title: str | None = None,
+    author: str | None = None,
+    identifiers=(),
+    cover_declared: str | None = None,
+) -> bytes:
+    """An OPF package document. `cover_declared` adds a manifest item for
+    `COVER_MEMBER` and points at it the way one generation of EPUBs
+    does: "properties" (EPUB 3 `properties="cover-image"`), "meta"
+    (EPUB 2 `<meta name="cover">`) or "id" (an item just called
+    `cover`, nothing else marking it).
+    """
     parts = [
         '<?xml version="1.0"?>',
         '<package xmlns="http://www.idpf.org/2007/opf" version="2.0">',
@@ -94,19 +109,46 @@ def opf_xml(*, title: str | None = None, author: str | None = None, identifiers=
         parts.append(f"<dc:creator>{author}</dc:creator>")
     for ident in identifiers:
         parts.append(f"<dc:identifier>{ident}</dc:identifier>")
-    parts.append("</metadata></package>")
+    if cover_declared == "meta":
+        parts.append('<meta name="cover" content="img1"/>')
+    parts.append("</metadata>")
+    if cover_declared is not None:
+        item_id = "cover" if cover_declared == "id" else "img1"
+        props = ' properties="cover-image"' if cover_declared == "properties" else ""
+        parts.append(
+            "<manifest>"
+            '<item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>'
+            f'<item id="{item_id}" href="{COVER_MEMBER}" media-type="image/jpeg"{props}/>'
+            "</manifest>"
+        )
+    parts.append("</package>")
     return "".join(parts).encode("utf-8")
 
 
 def make_epub(
-    path: Path, *, title: str | None = "A Title", author: str | None = None, identifiers=()
+    path: Path,
+    *,
+    title: str | None = "A Title",
+    author: str | None = None,
+    identifiers=(),
+    cover: bytes | None = None,
+    cover_declared: str = "properties",
 ) -> Path:
+    """Write a minimal EPUB. `cover` embeds those bytes as the cover
+    image, declared per `cover_declared` (see `opf_xml`)."""
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("META-INF/container.xml", CONTAINER_XML)
         zf.writestr(
             "OEBPS/content.opf",
-            opf_xml(title=title, author=author, identifiers=identifiers),
+            opf_xml(
+                title=title,
+                author=author,
+                identifiers=identifiers,
+                cover_declared=cover_declared if cover is not None else None,
+            ),
         )
+        if cover is not None:
+            zf.writestr(f"OEBPS/{COVER_MEMBER}", cover)
     return path
 
 

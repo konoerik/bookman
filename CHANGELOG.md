@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The EPUB's own embedded cover is used when identification supplies
+  none — no Open Library record, a record without a cover, or a failed
+  download (ADR-28). A record's cover still takes precedence. In the
+  first real bundle this took covers from 16 of 37 books to 37 of 37.
+- `docs/FIELD-NOTES.md`: a running register of what real bundles do that
+  the test suite did not predict, numbered `FN-n` so ADRs and FEATURES
+  rows can cite them.
 - Progress while importing a directory: `Library.iter_import` yields an
   `ImportEvent` before each file is attempted and again with its outcome
   (the `Book`, a `FormatConflictError`, or the exception that failed it),
@@ -81,6 +88,21 @@ All notable changes to this project are documented here. The format follows
   against its edition record.
 
 ### Fixed
+- Grouping a PDF with its EPUB when the PDF's copyright page lists
+  several ISBNs (print, ebook, prior editions): the join now considers
+  every ISBN the file carries, not only the one Open Library answered
+  first (ADR-26). And a follow-up file identified through a *different*
+  ISBN than the one it joined on — a title-less PDF citing the previous
+  edition's number — no longer renames the book to that edition or
+  fetches its cover (ADR-27). Real case: *The Rust Programming Language,
+  3rd Edition* was being relabelled as the 2nd edition.
+- The PDF ISBN scan now covers the first 10 pages instead of 5. Every
+  No Starch PDF puts the copyright page at index 5, so their ISBNs — and
+  for the quarter of them with an empty info dictionary, their only
+  metadata — were never seen.
+- A PDF whose `/Title` is a placeholder ("untitled") is shelved under its
+  filename stem, or the accepted record's title, as the spec always said
+  (IDENT-4), instead of a folder called `untitled`.
 - A junk title no longer groups unrelated files. A *placeholder* —
   "Untitled", "Untitled Document 2", "No Title", or a converter's
   filename stamp ("Microsoft Word - chapter1.docx") — now normalizes to

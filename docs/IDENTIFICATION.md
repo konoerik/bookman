@@ -177,8 +177,8 @@ Step IDs are stable — cite them from FEATURES rows, ADRs and commit
 messages.
 
 ```yaml
-spec_version: 4
-updated: 2026-09-19
+spec_version: 5
+updated: 2026-09-20
 scope: identify + group, and the match rule they share
 derived_from:
   - CLAUDE.md                # project goal and scope
@@ -193,6 +193,10 @@ derived_from:
   - ADR-19                   # title disagreement vetoes an asserted ISBN unless the author vouches
   - ADR-22                   # the file's own author wins too; the record's is kept as provenance
   - ADR-23                   # a different edition is a different book; the marker survives MATCH-0
+  - ADR-26                   # GROUP-1 joins on any ISBN the file carries
+  - ADR-27                   # an ISBN-identified follow-up upgrades only through the joined ISBN
+  - ADR-28                   # the EPUB's embedded cover when the record supplies none
+  - FIELD-NOTES.md           # shapes seen in real bundles; FN-n cited where a rule came from one
 # FEATURES rows named in `sources:` below are illustrative scenarios,
 # not sources of authority. See the History note at the top of this file.
 
@@ -503,19 +507,37 @@ steps:
         a valid identification; a failed cover download still leaves the
         book cataloged.
         sources: FEATURES E11, FEATURES E12
+      - >
+        When the book has no cover after that — no record, a record
+        without one, or a download that failed — and the file is an EPUB
+        with an embedded cover image, that image is the cover. It is the
+        publisher's own picture of this very edition, so it is never
+        wrong; it ranks below the record's only because the record's is
+        the one a later, stronger identification will replace it with,
+        and a book should not flip between two pictures. A book that
+        already has a cover keeps it.
+        sources: [ADR-28, "FEATURES E15", "FIELD-NOTES FN-5"]
 
   - id: GROUP-1
     stage: group
-    question: Does an existing book share this file's ISBN?
+    question: Does an existing book share one of this file's ISBNs?
     rules:
       - >
         A shared ISBN is not sufficient on its own. Run the same MATCH
         rule before joining, exactly as identification does — otherwise
         one false-positive ISBN in two unrelated files merges them.
+      - >
+        *Every* ISBN the file still carries is a candidate for the join,
+        not only the one identification settled on. A copyright page
+        lists the print and ebook numbers together, and the companion
+        EPUB asserts the ebook one; identification may well have accepted
+        the print one first (IDENT-1: the first is not privileged). An
+        ISBN rejected at IDENT-3 is not carried and so cannot join.
+        sources: [ADR-26, "FIELD-NOTES FN-4"]
     outcomes:
-      - when: a book shares the ISBN and MATCH confirms it
+      - when: a book shares one of the ISBNs and MATCH confirms it
         then: Join it. grouped = isbn. This beats any title-based candidate.
-        sources: ["FEATURES F2", "FEATURES F5", "FEATURES B10"]
+        sources: ["FEATURES F2", "FEATURES F5", "FEATURES B10", "FEATURES F17"]
       - when: otherwise
         then: Go to GROUP-2.
 
@@ -572,6 +594,16 @@ steps:
         A follow-up that identifies more strongly upgrades the book's
         metadata and cover.
         sources: FEATURES F7
+      - >
+        Except on an ISBN join: a follow-up identified *by ISBN* upgrades
+        the book only when its record was reached through the ISBN the
+        join was made on — the book's own. A record reached through
+        another of the file's ISBNs may describe a different edition (a
+        copyright page cites the previous ones), and a file with no
+        title of its own cannot tell. Such a follow-up is grouped, and
+        fills blanks, but the book keeps its title, cover and
+        `identified`.
+        sources: [ADR-27, "FEATURES F18", "FIELD-NOTES FN-4"]
       - >
         On *equal* evidence the first spelling of the title stands, so
         equally-identified formats do not take turns rewriting it.
@@ -655,5 +687,21 @@ open_questions:
       rule that IDENT-3 applies.
     blocked_on: persisting ISBN provenance on the book — FEATURES I12.
     status: known divergence between IDENT-3 and GROUP-1, accepted for now.
+  - id: OQ4
+    ref: FIELD-NOTES FN-4, FEATURES F16
+    question: >
+      A book remembers one ISBN, the one its first file was identified
+      by. GROUP-1 now compares every ISBN the *incoming* file carries
+      against it (ADR-26), which joins a PDF (print + ebook numbers
+      scraped) to the EPUB (ebook number asserted) — but only in that
+      order. PDF first, the book holds the print number and the EPUB's
+      ebook number never meets it; the pair then falls to the title
+      rule and, across an edition marker, splits. So GROUP-4's
+      order-independence rule does not hold for this shape.
+    blocked_on: >
+      remembering every ISBN a book's files claimed (a Book/metadata
+      change), which would also carry the provenance OQ2 wants. Decide
+      once more bundles show whether EPUB-first is the common case.
+    status: open; ADR-26 chose the narrow rule for v1.0.
 
 ```

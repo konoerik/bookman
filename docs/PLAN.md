@@ -4,11 +4,21 @@
 <!-- Current sprint items. Keep this short — 5-10 items max.
      If it grows beyond that, move lower-priority items to Backlog. -->
 
-v1.0 scope is complete. Remaining before release:
+v1.0 scope is complete. Remaining before release (in this order):
 
-- ~~**Windows CI leg**~~ — green 2026-09-20 on `21aefe5`, full matrix.
-- ~~Import progress~~ — done 2026-09-20 (ADR-25): `Library.iter_import`
-  streams `ImportEvent`s; the CLI prints per file as it goes.
+- **GitHub-ready beyond the basics** — release workflow that builds the
+  wheel on a `v*` tag and attaches it to a GitHub Release; classifier
+  `3 - Alpha` → `5 - Production/Stable`; version `0.1.0` → `1.0.0` with
+  the CHANGELOG `[Unreleased]` rolled over; issue templates / a
+  CONTRIBUTING note if cheap.
+- **Versioned wheel** — `uv build`, so the TUI project can depend on a
+  GitHub Release asset until PyPI. PyPI itself is later.
+- **More real bundles** (Humble Bundle) — run each into a scratch
+  library; log shapes in `docs/FIELD-NOTES.md`; fix only what a pattern
+  justifies. Candidates already waiting on more data: FN-4's PDF-first
+  order gap (OQ4, needs a book to remember every ISBN its files claim),
+  FN-7 (garbage PDF `/Author` overwriting a good EPUB author), FN-8
+  (MOBI adoption), FN-10 (single-creator EPUBs for multi-author books).
 - **Frontend guide `docs/API.md`** — task-oriented (open a library →
   import with progress → read the catalog → what `Book` fields mean →
   curate → errors → plug in a `MetadataSource`), with `cli.py` cited as
@@ -16,8 +26,6 @@ v1.0 scope is complete. Remaining before release:
   test that every `bookman.__all__` name is mentioned in it. Writing it
   is the final API review before the surface freezes.
 - `/prep`, then `/release`.
-- ~~Volumes~~ — closed 2026-09-20: "separate and unmerged" is the v1.0
-  answer (C17/F15); relating them is I6, post-1.0. Sentence on the I6 row.
 
 ## Backlog
 <!-- Accepted but not yet active. Load this section only when planning or prioritizing. -->
@@ -34,7 +42,11 @@ v1.0 scope is complete. Remaining before release:
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
-- Windows CI fix (2026-09-20): the config test fixture faked the home dir with HOME only; Windows reads USERPROFILE. Test-only, pushed as `21aefe5` with the three preceding commits; result pending.
+- First real bundle (2026-09-20): 37 No Starch/O'Reilly titles, 92 files, imported in four batches then whole. Four fixes — PDF ISBN scan 5 → 10 pages (B8), placeholder title → stem (A12), any-ISBN join + same-ISBN upgrade gate (ADR-26/27, F17/F18), EPUB embedded cover fallback (ADR-28, E15). Went from 7 split pairs and 16 covers to 0 and 37. `docs/FIELD-NOTES.md` started (FN-1..10). 485 tests.
+- Import progress (2026-09-20, ADR-25): `Library.iter_import` yields an `ImportEvent` before and after each file; `import_directory` collects them via `ImportBatchResult.record`; stopping the iteration cancels. CLI prints `[i/n] name ... imported: …` per file. FEATURES L3/L4 ✅. 467 tests. Surfaced that `__init__.py` is a namespace, not a guide — `docs/API.md` added to Active.
+- Ruff format enforced (2026-09-20): five drifted files reformatted; `ruff format --check` added to CI and the CLAUDE.md workflow, which had only run `ruff check`.
+- Volumes (2026-09-20): "separate and unmerged" is the v1.0 answer (C17/F15); relating them is I6, post-1.0. One sentence on the I6 row, no ADR — no behavior changed.
+- Windows CI fix (2026-09-20): the config test fixture faked the home dir with HOME only; Windows reads USERPROFILE. Pushed as `21aefe5`; the full matrix went green, including the ~200 tests that had never run on Windows.
 - ISBN-as-identity (2026-09-19): discussed and settled as no — not every book has one, one book can have several, it can be wrong, unreadable as a folder name. ADR-1 + ADR-17 already give the identifier. No code.
 - OQ3 / C7 (2026-09-19, ADR-23): a different edition is a different book. The accident was worse than recorded — bracketed/colon editions were merging; an ordinal edition marker is now lifted out before MATCH-0's stripping rules and compared like a volume number. Spec rows 22–27, spec_version 4.
 - IDENT-6 author rule (2026-09-18, ADR-22): the file's author stands on any accepted match; `Book.record_author` keeps the record's (schema 4); stand-in authors ("Unknown", "N/A") dropped, "Anonymous"/"Various" kept. FEATURES D13/D14.

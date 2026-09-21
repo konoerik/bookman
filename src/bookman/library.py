@@ -9,7 +9,7 @@ import filecmp
 import logging
 import re
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from bookman.errors import (
 )
 from bookman.formats import is_supported, parser_for
 from bookman.formats.base import ParsedMetadata
+from bookman.formats.epub import extract_cover
 from bookman.identify.isbn import is_valid_isbn, normalize_isbn
 from bookman.identify.match import match_basis
 from bookman.identify.openlibrary import OpenLibrarySource
@@ -256,7 +257,7 @@ class Library:
         found = identify(parsed, self._source)
         title = found.title or path.stem
 
-        match = self._find_book(title, found.author, found.isbn)
+        match = self._find_book(title, found.author, found.isbns)
         if match is None:
             directory = self._new_directory(title)
             book, join = Book(title=title, author=found.author, isbn=found.isbn), None
@@ -270,6 +271,9 @@ class Library:
         cover_url = _apply_identification(book, found, join, title=title)
         if cover_url:
             self._save_cover(book, directory, cover_url)
+        if book.cover_path is None and kind == FormatKind.EPUB:
+            # IDENT-6 (ADR-28): no record cover, so the EPUB's own.
+            self._save_embedded_cover(book, directory, path)
 
         self._persist(book, directory)
         return book
@@ -617,28 +621,30 @@ class Library:
             book.cover_path = target / book.cover_path.name
 
     def _find_book(
-        self, title: str, author: str | None, isbn: str | None
+        self, title: str, author: str | None, isbns: Sequence[str]
     ) -> tuple[Book, MatchBasis] | None:
         """Find the existing book a file described by (title, author,
-        isbn) belongs to, and the basis for that judgment.
+        isbns) belongs to, and the basis for that judgment.
 
         Spec: GROUP-1 (the ISBN join) then GROUP-2 (strongest MATCH
         across every existing book). Returning None is GROUP-3: this is
         a new book.
 
-        An exact ISBN match wins outright -- subject to the same guard
-        `identify` applies to a lookup hit: a shared ISBN whose title
-        *and* author both contradict the file is a scraped false
-        positive, not a match. Otherwise the strongest `match_basis`
-        across all books wins, so a TITLE_AUTHOR match is preferred
-        over a TITLE_ONLY one. None if no book matches.
+        An exact ISBN match wins outright -- on *any* of the ISBNs the
+        file carries (ADR-26: a copyright page lists print and ebook
+        numbers together, and the companion file may assert either) --
+        subject to the same guard `identify` applies to a lookup hit: a
+        shared ISBN whose title *and* author both contradict the file is
+        a scraped false positive, not a match. Otherwise the strongest
+        `match_basis` across all books wins, so a TITLE_AUTHOR match is
+        preferred over a TITLE_ONLY one. None if no book matches.
         """
         existing = self._catalog.all()
 
         # GROUP-1: a shared ISBN is not sufficient on its own -- run the
         # same MATCH rule identification runs, or one false-positive ISBN
         # in two unrelated files merges them.
-        if isbn:
+        for isbn in isbns:
             for book in existing:
                 if book.isbn == isbn and match_basis(
                     title, author, book.title, book.author, same_isbn=True
@@ -700,6 +706,20 @@ class Library:
         cover_path = directory / "cover.png"
         cover_path.write_bytes(cover_bytes)
         book.cover_path = cover_path
+
+    def _save_embedded_cover(self, book: Book, directory: Path, epub: Path) -> None:
+        """Write the cover image embedded in `epub`, if it has one, to
+        <directory>/cover.png and point `book` at it. Same name and
+        same as-stored bytes as a fetched cover, so nothing downstream
+        can tell them apart (ADR-28).
+        """
+        cover_bytes = extract_cover(epub)
+        if cover_bytes is None:
+            return
+        cover_path = directory / "cover.png"
+        cover_path.write_bytes(cover_bytes)
+        book.cover_path = cover_path
+        _log.debug("IDENT-6 using the embedded cover of %s for %r", epub.name, book.title)
 
 
 _DEDUP_SUFFIX = re.compile(r" \(\d+\)$")
@@ -810,6 +830,11 @@ def _apply_identification(
       present ones). The title is replaced only on *strictly* stronger
       evidence, so equally identified formats don't take turns
       respelling it.
+    - Except that on an ISBN join, a file identified *by ISBN* counts
+      only if its record came through the ISBN it joined on -- the
+      book's own. A record reached through another of the file's
+      numbers may be a prior edition's (ADR-27), and is treated like a
+      weaker identification.
     - A weaker or failed identification changes nothing except filling
       an empty author/isbn.
 
@@ -835,7 +860,9 @@ def _apply_identification(
         return None
 
     adopted = join is None or (
-        found.basis is not None and stronger_basis(found.basis, book.identified) == found.basis
+        found.basis is not None
+        and stronger_basis(found.basis, book.identified) == found.basis
+        and not _record_is_another_isbns(book, found, join)
     )
     if not adopted:
         book.author = book.author or found.author
@@ -849,6 +876,18 @@ def _apply_identification(
     book.isbn = found.isbn or book.isbn
     book.identified = found.basis
     return found.cover_url
+
+
+def _record_is_another_isbns(book: Book, found: Identification, join: MatchBasis) -> bool:
+    """Whether `found`'s record answers to some ISBN other than the one
+    the file just joined `book` on (spec GROUP-4, ADR-27).
+
+    Only an ISBN join and an ISBN-identified file can disagree this
+    way: the join was made on `book.isbn`, the record was fetched for
+    `found.isbn`, and if those differ the record may describe a prior
+    edition the copyright page merely cited.
+    """
+    return join == MatchBasis.ISBN and found.basis == MatchBasis.ISBN and found.isbn != book.isbn
 
 
 def _sanitize_dirname(title: str) -> str:

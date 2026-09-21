@@ -79,6 +79,17 @@ def test_parse_pdf_finds_isbn_in_first_pages_text(tmp_path):
     assert result.isbns_scraped
 
 
+def test_parse_pdf_finds_isbn_on_a_copyright_page_after_four_pages_of_front_matter(tmp_path):
+    # FEATURES B8: a No Starch PDF runs cover, blank, half-title, blank,
+    # title page, and only then the copyright page with the ISBN -- page
+    # index 5, which the original five-page window stopped just short of.
+    # (Observed on 5 of 18 in a real bundle, orphaning each one's PDF.)
+    page_texts = ("cover", "", "half title", "", "title page", f"ISBN {VALID_ISBN13}")
+    pdf = _make_pdf(tmp_path / "book.pdf", page_texts=page_texts)
+    result = parse_pdf(pdf)
+    assert result.isbns == [VALID_ISBN13]
+
+
 def test_parse_pdf_ignores_isbn_beyond_scan_page_limit(tmp_path):
     page_texts = ("no isbn here",) * _ISBN_SCAN_PAGES + (f"ISBN {VALID_ISBN13}",)
     pdf = _make_pdf(tmp_path / "book.pdf", page_texts=page_texts)

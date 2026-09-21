@@ -345,6 +345,34 @@ def test_identify_does_nothing_without_title_or_isbn(source):
     assert found.author == "Cal Newport"
 
 
+def test_identify_carries_every_isbn_the_file_still_claims(source):
+    # ADR-26 / FN-4: a copyright page lists print, ebook and prior-edition
+    # numbers. Whichever one the source knows, the others stay with the
+    # file so GROUP-1 can join on any of them -- except one whose record
+    # contradicted the file (IDENT-3), which is dropped.
+    source.records = {
+        "9781718504127": DEEP_WORK,  # accepted
+        "9781593278281": Candidate(title="Emma", author="Jane Austen", cover_url=None),
+    }
+
+    found = identify(_parsed(isbns=["9781593278281", "9781718504127", "9781718504134"]), source)
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.isbn == "9781718504127"
+    assert found.isbns == ("9781718504127", "9781718504134")
+
+
+def test_identify_carries_isbns_the_source_does_not_know(source):
+    source.record = None
+    source.results = []
+
+    found = identify(_parsed(isbns=["9781718504127", "9781718504134"]), source)
+
+    assert found.basis is None
+    assert found.isbn == "9781718504127"
+    assert found.isbns == ("9781718504127", "9781718504134")
+
+
 def test_identify_does_not_search_on_a_placeholder_title(source):
     # FEATURES A12: "Untitled" would only return whatever Open Library
     # happens to rank first, and match_basis would reject all of it.
@@ -354,7 +382,19 @@ def test_identify_does_not_search_on_a_placeholder_title(source):
 
     assert not source.called("search")
     assert found.basis is None
-    assert found.title == "Untitled"  # left alone for the user to correct
+    assert found.title is None  # IDENT-4: names no book; the stem will name the folder
+
+
+def test_identify_lets_an_isbn_record_title_a_placeholder_titled_file(source):
+    # Spec MATCH-1 row 8: a placeholder cannot veto an ISBN, and since it
+    # names nothing the record's title fills the blank. Observed on a
+    # No Starch PDF whose /Title was literally "untitled".
+    source.record = DEEP_WORK
+
+    found = identify(_parsed(title="untitled", author=None, isbns=["9781455586691"]), source)
+
+    assert found.basis == MatchBasis.ISBN
+    assert found.title == DEEP_WORK.title
 
 
 def test_identify_still_searches_a_real_title_containing_a_placeholder_word(source):

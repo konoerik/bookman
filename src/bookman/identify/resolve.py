@@ -36,6 +36,12 @@ class Identification:
             author that was only a stand-in ("Unknown") counts as none.
         isbn: The file's ISBN-13, or None if the file had none or its
             ISBN was rejected as not describing this file.
+        isbns: Every ISBN the file still claims, in the parser's order:
+            the one behind `isbn`, the ones the source did not know,
+            the ones never tried -- minus any rejected at IDENT-3.
+            GROUP-1 joins on any of them (ADR-26), since a copyright
+            page lists the print and ebook numbers together and a
+            companion file may assert either.
         cover_url: Cover to download for the accepted record, if any.
         basis: How the accepted record was matched to the file, or
             None if no record was accepted and title/author are the
@@ -51,6 +57,7 @@ class Identification:
     isbn: str | None
     cover_url: str | None
     basis: MatchBasis | None
+    isbns: tuple[str, ...] = ()
     record_author: str | None = None
 
 
@@ -100,8 +107,16 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         # -- match, accept, or file-only -- sees the file as authorless.
         _log.debug("IDENT-6 ignoring stand-in author %r", parsed.author)
         parsed = replace(parsed, author=None)
+    if parsed.title is not None and not is_usable_title(parsed.title):
+        # IDENT-4: a placeholder ("Untitled", a converter's stamp) names
+        # no book. Treated as no title from here on, so the file-only
+        # path falls back to the filename stem and an accepted record's
+        # title fills the blank instead of "untitled" naming the folder.
+        _log.debug("IDENT-4 ignoring placeholder title %r", parsed.title)
+        parsed = replace(parsed, title=None)
 
     isbn: str | None = None
+    rejected: set[str] = set()
     # IDENT-1: try each ISBN in turn until one is accepted. A file can
     # legitimately carry the print and ebook ISBNs, or a cited list; the
     # first is not privileged.
@@ -135,10 +150,12 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
                 record.title,
                 basis.value,
             )
-            return _accepted(parsed, record, file_isbn, basis)
+            return _accepted(parsed, record, file_isbn, basis, rejected)
         # IDENT-3: the record contradicts the file, so this ISBN isn't
-        # this book's. It is dropped -- never kept as `isbn` -- so a false
-        # positive cannot seed an ISBN-based join later (GROUP-1).
+        # this book's. It is dropped -- never kept as `isbn` nor carried
+        # in `isbns` -- so a false positive cannot seed an ISBN-based
+        # join later (GROUP-1).
+        rejected.add(file_isbn)
         _log.info(
             "IDENT-3 rejected ISBN %s: record %r by %r contradicts file %r by %r",
             file_isbn,
@@ -148,9 +165,10 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
             parsed.author,
         )
 
-    # IDENT-4: a placeholder title is not worth searching on.
+    # IDENT-4: nothing to search on without a title (placeholders were
+    # dropped above).
     file_title = parsed.title
-    if file_title and is_usable_title(file_title):
+    if file_title:
         # IDENT-5: candidates are proposals; each must pass MATCH on its own.
         candidates = (
             _safe(
@@ -173,7 +191,7 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
                 basis.value,
                 file_title,
             )
-            return _accepted(parsed, best[0], isbn, best[1])
+            return _accepted(parsed, best[0], isbn, best[1], rejected)
         _log.info(
             "IDENT-5 no agreeing record among %d candidates for %r",
             len(candidates),
@@ -181,8 +199,18 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         )
 
     return Identification(
-        title=parsed.title, author=parsed.author, isbn=isbn, cover_url=None, basis=None
+        title=parsed.title,
+        author=parsed.author,
+        isbn=isbn,
+        cover_url=None,
+        basis=None,
+        isbns=_claimed(parsed, rejected),
     )
+
+
+def _claimed(parsed: ParsedMetadata, rejected: set[str]) -> tuple[str, ...]:
+    """The ISBNs the file still claims once IDENT-3 has had its say."""
+    return tuple(i for i in parsed.isbns if i not in rejected)
 
 
 def _outranks(record: Candidate, basis: MatchBasis, best: tuple[Candidate, MatchBasis]) -> bool:
@@ -200,7 +228,11 @@ def _outranks(record: Candidate, basis: MatchBasis, best: tuple[Candidate, Match
 
 
 def _accepted(
-    parsed: ParsedMetadata, record: Candidate, isbn: str | None, basis: MatchBasis
+    parsed: ParsedMetadata,
+    record: Candidate,
+    isbn: str | None,
+    basis: MatchBasis,
+    rejected: set[str],
 ) -> Identification:
     """Apply an accepted record to the file's metadata.
 
@@ -215,6 +247,7 @@ def _accepted(
         cover_url=record.cover_url,
         basis=basis,
         record_author=record.author,
+        isbns=_claimed(parsed, rejected),
     )
 
 
