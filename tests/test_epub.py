@@ -147,3 +147,74 @@ def test_extract_cover_never_raises_for_an_unreadable_file(tmp_path):
     bad = tmp_path / "b.epub"
     bad.write_bytes(b"not a zip")
     assert extract_cover(bad) is None
+
+
+def _make_epub_with_spine(path: Path, documents: list[str], *, identifiers=()) -> Path:
+    """An EPUB whose spine is `documents`, in reading order, each an
+    XHTML body with the given text (FIELD-NOTES FN-21's shape)."""
+    items = "".join(
+        f'<item id="d{n}" href="text/d{n}.xhtml" media-type="application/xhtml+xml"/>'
+        for n in range(len(documents))
+    )
+    spine = "".join(f'<itemref idref="d{n}"/>' for n in range(len(documents)))
+    ids = "".join(f"<dc:identifier>{i}</dc:identifier>" for i in identifiers)
+    opf = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title>'
+        f"{ids}</metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"
+    )
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("META-INF/container.xml", CONTAINER_XML)
+        zf.writestr("OEBPS/content.opf", opf)
+        for n, text in enumerate(documents):
+            zf.writestr(
+                f"OEBPS/text/d{n}.xhtml",
+                f'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>{text}</p></body></html>',
+            )
+    return path
+
+
+OTHER_ISBN13 = "9781801815727"
+
+
+def test_parse_epub_scans_front_matter_when_the_metadata_has_no_isbn(tmp_path):
+    # FIELD-NOTES FN-21 (Packt): dc:identifier is only a urn:uuid; the
+    # ISBN is on the title page. Found there, it counts as scraped.
+    epub = _make_epub_with_spine(
+        tmp_path / "book.epub",
+        ["Cover", f"Title page. ISBN {VALID_ISBN13}", "Contributors", "Preface"],
+        identifiers=["urn:uuid:9a4d0a36-4002-459a-a7f2-5b4d879c57b9"],
+    )
+    result = parse_epub(epub)
+    assert result.isbns == [VALID_ISBN13]
+    assert result.isbns_scraped
+
+
+def test_parse_epub_does_not_scan_past_the_front_matter(tmp_path):
+    # Chapters cite editions and back matter advertises other books.
+    epub = _make_epub_with_spine(
+        tmp_path / "book.epub",
+        ["Cover", "Title page", "Contributors", "Preface", f"Chapter 1 cites {OTHER_ISBN13}"],
+    )
+    assert parse_epub(epub).isbns == []
+
+
+def test_parse_epub_ignores_isbns_in_markup(tmp_path):
+    # Packt names images after other books' ISBNs; only text counts.
+    epub = _make_epub_with_spine(
+        tmp_path / "book.epub", [f'<img src="{OTHER_ISBN13}.png"/>Title page']
+    )
+    assert parse_epub(epub).isbns == []
+
+
+def test_parse_epub_does_not_scan_when_the_metadata_declares_an_isbn(tmp_path):
+    epub = _make_epub_with_spine(
+        tmp_path / "book.epub", [f"Title page. ISBN {OTHER_ISBN13}"], identifiers=[VALID_ISBN13]
+    )
+    result = parse_epub(epub)
+    assert result.isbns == [VALID_ISBN13]
+    assert not result.isbns_scraped
+
+
+def test_parse_epub_without_a_spine_still_parses(tmp_path):
+    assert parse_epub(_make_epub(tmp_path / "book.epub")).isbns == []

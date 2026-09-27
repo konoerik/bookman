@@ -153,7 +153,12 @@ def make_epub(
 
 
 def make_pdf(
-    path: Path, *, title: str | None = "A Title", author: str | None = None, text: str = ""
+    path: Path,
+    *,
+    title: str | None = "A Title",
+    author: str | None = None,
+    text: str = "",
+    password: str | None = None,
 ) -> Path:
     writer = PdfWriter()
     page = writer.add_blank_page(width=200, height=200)
@@ -182,6 +187,8 @@ def make_pdf(
         metadata["/Author"] = author
     if metadata:
         writer.add_metadata(metadata)
+    if password is not None:
+        writer.encrypt(user_password=password, owner_password="owner", algorithm="RC4-128")
 
     with open(path, "wb") as f:
         writer.write(f)

@@ -13,13 +13,13 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from bookman.errors import CatalogError
-from bookman.models import Book, BookFormat, FormatKind, MatchBasis
+from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 
 _METADATA_FILENAME = "metadata.json"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 # Versions whose fields this module understands directly. Version 1 is
 # handled separately, by migration.
-_MODERN_VERSIONS = (2, 3, _SCHEMA_VERSION)
+_MODERN_VERSIONS = (2, 3, 4, _SCHEMA_VERSION)
 
 # Namespace for deriving an id for a pre-version-3 book that has none
 # stored. Deterministic, so repeated reads of an un-upgraded file agree
@@ -35,12 +35,13 @@ _V1_CONFIDENCE_TO_IDENTIFIED = {
 
 
 def save_metadata(book: Book, directory: Path) -> None:
-    """Write a Book's metadata to <directory>/metadata.json (schema version 4).
+    """Write a Book's metadata to <directory>/metadata.json (schema version 5).
 
     Serializes id, title, author, record_author, isbn, identified,
     grouped, reviewed, and
     each format's kind and filename (relative to `directory`, not the
-    absolute path stored on `BookFormat.path`), plus the cover filename
+    absolute path stored on `BookFormat.path`) -- plus its `read_issue`
+    when it has one, the key being absent otherwise -- and the cover filename
     if `book.cover_path` is set. Overwrites any existing metadata.json
     in `directory`, upgrading an older-version file in place. On
     success `book.directory` is set to `directory`.
@@ -73,10 +74,7 @@ def save_metadata(book: Book, directory: Path) -> None:
         "identified": book.identified.value if book.identified else None,
         "grouped": book.grouped.value if book.grouped else None,
         "reviewed": book.reviewed,
-        "formats": [
-            {"kind": fmt.kind.value, "filename": _relative_filename(fmt.path, directory)}
-            for fmt in book.formats
-        ],
+        "formats": [_format_entry(fmt, directory) for fmt in book.formats],
         "cover": _relative_filename(book.cover_path, directory) if book.cover_path else None,
     }
     target = directory / _METADATA_FILENAME
@@ -84,6 +82,14 @@ def save_metadata(book: Book, directory: Path) -> None:
     tmp.write_text(json.dumps(data, indent=2))
     os.replace(tmp, target)
     book.directory = directory
+
+
+def _format_entry(fmt: BookFormat, directory: Path) -> dict[str, str]:
+    entry = {"kind": fmt.kind.value, "filename": _relative_filename(fmt.path, directory)}
+    if fmt.read_issue is not None:
+        # Added in version 5 (ADR-29); written only when there is one.
+        entry["read_issue"] = fmt.read_issue.value
+    return entry
 
 
 def load_metadata(directory: Path) -> Book:
@@ -139,6 +145,7 @@ def load_metadata(directory: Path) -> Book:
             BookFormat(
                 kind=FormatKind(fmt["kind"]),
                 path=_resolve_filename(fmt["filename"], directory, path),
+                read_issue=ReadIssue(fmt["read_issue"]) if fmt.get("read_issue") else None,
             )
             for fmt in data["formats"]
         ]

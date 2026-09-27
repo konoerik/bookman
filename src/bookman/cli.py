@@ -7,6 +7,7 @@ duplicate.
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import sys
 from collections.abc import Sequence
@@ -29,7 +30,7 @@ from bookman.errors import (
 )
 from bookman.formats import is_supported, supported_suffixes
 from bookman.library import ImportBatchResult, ImportEvent, Library
-from bookman.models import Book, MatchBasis
+from bookman.models import Book, MatchBasis, ReadIssue
 
 _SUPPORTED = ", ".join(supported_suffixes())
 _RULE_WIDTH = 60
@@ -345,6 +346,7 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
         print(f"failed: {path}: {_describe(exc, path)}", file=sys.stderr)
         return 1
     print(f"imported: {book.title}")
+    _print_read_issue(path, book)
     return 0
 
 
@@ -450,6 +452,7 @@ def _print_event(event: ImportEvent, directory: Path) -> None:
         print(label, end="", flush=True)
     elif isinstance(outcome, Book):
         print(f" imported: {outcome.title} ({_describe_import(event.path, outcome)})", flush=True)
+        _print_read_issue(event.path, outcome)
     elif isinstance(outcome, UnsupportedFormatError):
         print(f"{label} skipped (unsupported format {event.path.suffix})", flush=True)
     else:
@@ -459,6 +462,22 @@ def _print_event(event: ImportEvent, directory: Path) -> None:
         else:
             message = f"failed: {event.path}: {_describe(outcome, event.path)}"
             print(message, file=sys.stderr, flush=True)
+
+
+def _print_read_issue(source: Path, book: Book) -> None:
+    """If bookman could not read inside the file just imported (ADR-29),
+    say so under its line, with `ReadIssue.advice` naming the next step --
+    and the folder, when that step is to delete it and import again."""
+    kind = source.suffix.lower().lstrip(".")
+    issue = next(
+        (fmt.read_issue for fmt in book.formats if fmt.kind.value == kind and fmt.read_issue),
+        None,
+    )
+    if issue is None:
+        return
+    print(f"  could not read inside {source.name}: {issue.advice}", flush=True)
+    if issue == ReadIssue.NEEDS_CRYPTO and book.directory is not None:
+        print(f"  folder: {book.directory.resolve()}", flush=True)
 
 
 def _describe_import(source: Path, book: Book) -> str:
@@ -484,6 +503,12 @@ def _describe(exc: BaseException, path: Path) -> str:
         return "no such file or directory"
     if isinstance(exc, UnsupportedFormatError):
         return f"unsupported format (supported: {_SUPPORTED})"
+    if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+        # ADR-35: the import cleaned up after itself, so retrying is safe.
+        return (
+            "not enough disk space to copy it into the library (nothing was left behind); "
+            "free up space, then import it again"
+        )
     message = str(exc) or type(exc).__name__
     return message.removeprefix(f"{path}: ")
 
@@ -516,10 +541,23 @@ def _review_reason(book: Book) -> str | None:
     if not book.needs_review:
         return None
     if book.identified is None:
+        unreadable = next((fmt for fmt in book.formats if fmt.read_issue), None)
+        if unreadable is not None and unreadable.read_issue is not None:
+            label = _READ_ISSUE_LABELS[unreadable.read_issue]
+            return f"could not read the {unreadable.kind.value} ({label})"
         return "no online match"
     if book.identified == MatchBasis.TITLE_ONLY:
         return "matched by title only"
     return "grouped by title only"
+
+
+# Short forms of `ReadIssue` for the one-line `list` output; the full
+# sentence, with the next step, is `ReadIssue.advice`, printed on import.
+_READ_ISSUE_LABELS = {
+    ReadIssue.NEEDS_CRYPTO: "encrypted; needs bookman[crypto]",
+    ReadIssue.PASSWORD: "password-protected",
+    ReadIssue.UNSUPPORTED_ENCRYPTION: "unsupported encryption",
+}
 
 
 def _format_batch_result(result: ImportBatchResult) -> str:

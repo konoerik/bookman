@@ -416,3 +416,72 @@ def test_identify_searches_a_generic_title_and_lets_the_author_settle_it(source)
     assert source.called("search")
     assert found.basis == MatchBasis.TITLE_AUTHOR
     assert found.cover_url == "tb.jpg"
+
+
+def test_identify_drops_the_author_that_came_with_a_filename_title(source):
+    # ADR-32 (FIELD-NOTES FN-11): beside "css.indb" sits the operator's
+    # login, never a writer; the record's author fills the blank.
+    source.record = Candidate(
+        title="C Programming Pocket Primer", author="Oswald Campesato", cover_url=None
+    )
+    found = identify(
+        _parsed(title="css.indb", author="radha", isbns=[ISBN], isbns_scraped=True), source
+    )
+    assert found.basis == MatchBasis.ISBN
+    assert found.title == "C Programming Pocket Primer"
+    assert found.author == "Oswald Campesato"
+
+
+def test_identify_keeps_the_author_beside_a_converter_stamp(source):
+    # The "App - file.ext" stamp's author is often the writer; only the
+    # bare-filename shape drops it.
+    found = identify(_parsed(title="Microsoft Word - draft.docx", author="Jane Doe"), source)
+    assert found.author == "Jane Doe"
+
+
+ACCOUNTING_101 = Candidate(title="Accounting 101", author="Michele Cagan", cover_url="a.jpg")
+
+
+class _PickySource(FakeSource):
+    """Answers a search only for exactly the (title, author) pairs given --
+    the way Open Library returned nothing for "Accounting 101 (Humble)" or
+    for the author "CPA  Michele Cagan" (FIELD-NOTES FN-13)."""
+
+    def __init__(self, answers):
+        super().__init__()
+        self.answers = answers
+
+    def search(self, title, author=None):
+        self.calls.append(("search", title, author or ""))
+        return list(self.answers.get((title, author), []))
+
+
+def test_identify_searches_without_a_trailing_vendor_tag():
+    source = _PickySource({("Accounting 101", "Michele Cagan"): [ACCOUNTING_101]})
+    found = identify(_parsed(title="Accounting 101 (Humble)", author="Michele Cagan"), source)
+    assert found.basis == MatchBasis.TITLE_AUTHOR
+    # The query lost the tag; the book did not (ADR-10).
+    assert found.title == "Accounting 101 (Humble)"
+    assert ("search", "Accounting 101", "Michele Cagan") in source.calls
+
+
+def test_identify_retries_by_title_alone_when_title_and_author_find_nothing():
+    source = _PickySource({("Accounting 101", None): [ACCOUNTING_101]})
+    found = identify(_parsed(title="Accounting 101 (Humble)", author="CPA  Michele Cagan"), source)
+    assert found.basis == MatchBasis.TITLE_AUTHOR
+    assert found.cover_url == "a.jpg"
+    assert [c[2] for c in source.calls if c[0] == "search"] == ["CPA  Michele Cagan", ""]
+
+
+def test_identify_title_only_retry_still_vetoes_a_different_author():
+    other = Candidate(title="Accounting 101", author="Somebody Else", cover_url=None)
+    source = _PickySource({("Accounting 101", None): [other]})
+    found = identify(_parsed(title="Accounting 101", author="Michele Cagan"), source)
+    assert found.basis is None
+
+
+def test_identify_does_not_retry_when_the_first_search_found_candidates():
+    other = Candidate(title="Something Else", author="Michele Cagan", cover_url=None)
+    source = _PickySource({("Accounting 101", "Michele Cagan"): [other]})
+    identify(_parsed(title="Accounting 101", author="Michele Cagan"), source)
+    assert len([c for c in source.calls if c[0] == "search"]) == 1

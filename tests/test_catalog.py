@@ -3,7 +3,7 @@ import json
 import pytest
 
 from bookman.errors import CatalogError
-from bookman.models import Book, BookFormat, FormatKind, MatchBasis
+from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 from bookman.storage.catalog import load_metadata, save_metadata
 
 
@@ -189,12 +189,12 @@ def test_save_then_load_metadata_roundtrips_none_fields(tmp_path):
     assert loaded.needs_review is True
 
 
-def test_save_metadata_writes_schema_version_4_without_confidence(tmp_path):
+def test_save_metadata_writes_schema_version_5_without_confidence(tmp_path):
     directory, book = _make_book_dir(tmp_path)
     save_metadata(book, directory)
     data = json.loads((directory / "metadata.json").read_text())
 
-    assert data["version"] == 4
+    assert data["version"] == 5
     assert data["id"] == book.id
     assert "confidence" not in data
     assert data["identified"] == "isbn"
@@ -236,7 +236,7 @@ def test_load_metadata_upgrades_version_1_file_on_next_save(tmp_path):
     save_metadata(load_metadata(directory), directory)
     data = json.loads((directory / "metadata.json").read_text())
 
-    assert data["version"] == 4
+    assert data["version"] == 5
     assert data["identified"] == "isbn"
     assert data["id"]
 
@@ -263,7 +263,7 @@ def test_load_metadata_rejects_unknown_match_basis(tmp_path):
 def test_load_metadata_rejects_unsupported_schema_version(tmp_path):
     directory, book = _make_book_dir(tmp_path)
     save_metadata(book, directory)
-    data = (directory / "metadata.json").read_text().replace('"version": 4', '"version": 99')
+    data = (directory / "metadata.json").read_text().replace('"version": 5', '"version": 99')
     (directory / "metadata.json").write_text(data)
 
     with pytest.raises(ValueError):
@@ -347,7 +347,7 @@ def test_v3_file_without_record_author_loads_as_none(tmp_path):
     assert loaded.author == book.author
 
     save_metadata(loaded, directory)
-    assert json.loads((directory / "metadata.json").read_text())["version"] == 4
+    assert json.loads((directory / "metadata.json").read_text())["version"] == 5
 
 
 def test_pre_v3_derived_id_becomes_a_stored_id_on_save(tmp_path):
@@ -382,6 +382,49 @@ def test_load_metadata_rejects_a_malformed_id(tmp_path, bad):
     save_metadata(book, directory)
     data = json.loads((directory / "metadata.json").read_text())
     data["id"] = bad
+    (directory / "metadata.json").write_text(json.dumps(data))
+
+    with pytest.raises(CatalogError):
+        load_metadata(directory)
+
+
+def test_read_issue_round_trips(tmp_path):
+    # ADR-29: why bookman could not read inside a file is kept on the format.
+    directory, book = _make_book_dir(tmp_path)
+    fmt = book.formats[0]
+    book.formats = [BookFormat(kind=fmt.kind, path=fmt.path, read_issue=ReadIssue.NEEDS_CRYPTO)]
+    save_metadata(book, directory)
+
+    data = json.loads((directory / "metadata.json").read_text())
+    assert data["formats"][0]["read_issue"] == "needs_crypto"
+    assert load_metadata(directory).formats[0].read_issue == ReadIssue.NEEDS_CRYPTO
+
+
+def test_a_readable_format_writes_no_read_issue_key(tmp_path):
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    assert all("read_issue" not in fmt for fmt in data["formats"])
+
+
+def test_v4_file_loads_with_no_read_issue_and_upgrades_on_save(tmp_path):
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    data["version"] = 4
+    (directory / "metadata.json").write_text(json.dumps(data))
+
+    loaded = load_metadata(directory)
+    assert all(fmt.read_issue is None for fmt in loaded.formats)
+    save_metadata(loaded, directory)
+    assert json.loads((directory / "metadata.json").read_text())["version"] == 5
+
+
+def test_load_metadata_rejects_an_unknown_read_issue(tmp_path):
+    directory, book = _make_book_dir(tmp_path)
+    save_metadata(book, directory)
+    data = json.loads((directory / "metadata.json").read_text())
+    data["formats"][0]["read_issue"] = "haunted"
     (directory / "metadata.json").write_text(json.dumps(data))
 
     with pytest.raises(CatalogError):

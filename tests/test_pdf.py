@@ -5,6 +5,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject
 
 from bookman.formats.pdf import _ISBN_SCAN_PAGES, BadPdfError, parse_pdf
+from bookman.models import ReadIssue
 
 VALID_ISBN13 = "9780306406157"
 
@@ -40,6 +41,7 @@ def _make_pdf(
     page_texts: tuple[str, ...] = (),
     num_blank_pages: int = 0,
     password: str | None = None,
+    algorithm: str = "RC4-128",
 ) -> Path:
     writer = PdfWriter()
     for text in page_texts:
@@ -58,7 +60,7 @@ def _make_pdf(
         writer.add_metadata(metadata)
 
     if password is not None:
-        writer.encrypt(user_password=password, owner_password=password)
+        writer.encrypt(user_password=password, owner_password="owner", algorithm=algorithm)
 
     with open(path, "wb") as f:
         writer.write(f)
@@ -118,14 +120,75 @@ def test_parse_pdf_nonexistent_path_raises_file_not_found(tmp_path):
 def test_parse_pdf_not_a_pdf_raises_bad_pdf_error(tmp_path):
     not_a_pdf = tmp_path / "book.pdf"
     not_a_pdf.write_bytes(b"this is not a pdf file at all")
-    with pytest.raises(BadPdfError):
+    with pytest.raises(BadPdfError, match="check that it opens in a PDF reader"):
         parse_pdf(not_a_pdf)
 
 
-def test_parse_pdf_encrypted_without_password_raises_bad_pdf_error(tmp_path):
-    pdf = _make_pdf(tmp_path / "book.pdf", password="secret")
-    with pytest.raises(BadPdfError):
-        parse_pdf(pdf)
+def test_parse_pdf_with_a_real_password_reports_it_instead_of_failing(tmp_path):
+    # Spec PR6 (ADR-29): the file is intact and bought; bookman just
+    # cannot see inside it. It is imported on its filename alone.
+    pdf = _make_pdf(tmp_path / "book.pdf", title="Deep Work", password="secret")
+    result = parse_pdf(pdf)
+    assert result.read_issue == ReadIssue.PASSWORD
+    assert (result.title, result.author, result.isbns) == (None, None, [])
+
+
+def test_parse_pdf_reads_an_aes_pdf_with_an_empty_password(tmp_path):
+    # FIELD-NOTES FN-12: every InformIT PDF is AES-encrypted with an empty
+    # user password. With the crypto extra installed it reads normally.
+    pdf = _make_pdf(
+        tmp_path / "book.pdf",
+        title="Domain-Driven Design Distilled",
+        page_texts=(f"ISBN {VALID_ISBN13}",),
+        password="",
+        algorithm="AES-256",
+    )
+    result = parse_pdf(pdf)
+    assert result.read_issue is None
+    assert result.title == "Domain-Driven Design Distilled"
+    assert result.isbns == [VALID_ISBN13]
+
+
+def test_parse_pdf_reports_a_missing_crypto_backend_instead_of_failing(tmp_path, monkeypatch):
+    # FN-12 without the extra: pypdf raises DependencyError, which is not
+    # a PdfReadError and used to escape as an undocumented exception.
+    from pypdf.errors import DependencyError
+
+    from bookman.formats import pdf as pdf_module
+
+    def reader_without_backend(path):
+        raise DependencyError("cryptography>=3.1 is required for AES algorithm")
+
+    monkeypatch.setattr(pdf_module, "PdfReader", reader_without_backend)
+    result = parse_pdf(_make_pdf(tmp_path / "book.pdf", password="", algorithm="AES-256"))
+    assert result.read_issue == ReadIssue.NEEDS_CRYPTO
+    assert (result.title, result.author, result.isbns) == (None, None, [])
+
+
+def test_parse_pdf_reports_a_null_encrypt_entry_instead_of_failing(tmp_path):
+    # FIELD-NOTES FN-20 ("A Mind for Numbers"): the trailer's /Encrypt is
+    # a null object and pypdf's encryption setup dies with AttributeError.
+    pdf = _make_pdf(tmp_path / "book.pdf", title="A Mind for Numbers")
+    raw = pdf.read_bytes()
+    assert b"trailer\n<<\n" in raw
+    pdf.write_bytes(raw.replace(b"trailer\n<<\n", b"trailer\n<<\n/Encrypt null\n", 1))
+    result = parse_pdf(pdf)
+    assert result.read_issue == ReadIssue.UNSUPPORTED_ENCRYPTION
+    assert (result.title, result.author, result.isbns) == (None, None, [])
+
+
+def test_parse_pdf_reports_a_drm_security_handler_instead_of_failing(tmp_path):
+    # A non-Standard security handler (Adobe DRM) makes pypdf raise
+    # NotImplementedError -- the same escape as FN-20.
+    pdf = _make_pdf(tmp_path / "book.pdf", password="")
+    raw = pdf.read_bytes()
+    assert b"/Filter /Standard" in raw
+    pdf.write_bytes(raw.replace(b"/Filter /Standard", b"/Filter /EBX_HAND"))  # same length
+    assert parse_pdf(pdf).read_issue == ReadIssue.UNSUPPORTED_ENCRYPTION
+
+
+def test_parse_pdf_unencrypted_file_has_no_read_issue(tmp_path):
+    assert parse_pdf(_make_pdf(tmp_path / "book.pdf")).read_issue is None
 
 
 def test_parse_pdf_silences_pypdf_recoverable_warnings(tmp_path, monkeypatch, caplog):

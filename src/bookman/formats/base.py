@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Protocol
 
 from bookman.errors import UnsupportedFormatError
-from bookman.models import FormatKind
+from bookman.models import FormatKind, ReadIssue
 
 
 @dataclass
@@ -28,12 +28,16 @@ class ParsedMetadata:
             A scraped ISBN may belong to a book merely *cited* in the
             file ("Also by this author ..."), so identification asks
             more of it before trusting it (see `match_basis`).
+        read_issue: Why the file's contents could not be read, or None.
+            Set only on a file that is really of its format but closed
+            to bookman (spec PR6); the other fields are then empty.
     """
 
     title: str | None
     author: str | None
     isbns: list[str] = field(default_factory=list)
     isbns_scraped: bool = False
+    read_issue: ReadIssue | None = None
 
 
 class FormatParser(Protocol):
@@ -43,7 +47,9 @@ class FormatParser(Protocol):
 
     A parser raises a `ParseError` subclass when the file is not what
     its suffix claims, and never returns None -- missing fields are
-    None on the ParsedMetadata.
+    None on the ParsedMetadata. A file that *is* what its suffix claims
+    but whose contents it cannot read is not an error: it comes back
+    empty with a `read_issue` (spec PR6).
     """
 
     def __call__(self, path: Path) -> ParsedMetadata: ...

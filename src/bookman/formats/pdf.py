@@ -8,11 +8,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from pypdf import PasswordType, PdfReader
-from pypdf.errors import PdfReadError
+from pypdf.errors import DependencyError, PdfReadError
 
 from bookman.errors import ParseError
 from bookman.formats.base import ParsedMetadata
 from bookman.identify.isbn import extract_isbns
+from bookman.models import ReadIssue
 
 # Where the copyright page can sit. A real bundle put the ISBN as far
 # back as page index 7 (O'Reilly) and at index 5 on every No Starch
@@ -36,6 +37,14 @@ def parse_pdf(path: Path) -> ParsedMetadata:
     PDFs rarely carry a structured ISBN field, so this is a
     best-effort text scan rather than a lookup of a known metadata key.
 
+    An encrypted PDF that bookman cannot open is not an error (spec
+    PR6, ADR-29): it is a real PDF, and a bought book, so it comes back
+    with no title, author or ISBNs and a `read_issue` saying why --
+    AES without the optional crypto backend, a real password, or
+    encryption pypdf cannot handle (a DRM security handler, a damaged
+    `/Encrypt` entry). An AES PDF with an empty password reads normally
+    once `bookman[crypto]` is installed.
+
     Args:
         path: Path to a .pdf file.
 
@@ -48,22 +57,51 @@ def parse_pdf(path: Path) -> ParsedMetadata:
 
     Raises:
         FileNotFoundError: If path does not exist.
-        BadPdfError: If the file cannot be read as a PDF (corrupt,
-            encrypted without a usable password, or not a PDF at all).
+        BadPdfError: If the file is not a PDF at all (damaged, or
+            something else with a .pdf name).
     """
     try:
         with _quiet_pypdf():
-            reader = PdfReader(path)
+            try:
+                reader = PdfReader(path)
+            except DependencyError:
+                return _unreadable(ReadIssue.NEEDS_CRYPTO)
+            except PdfReadError:
+                raise
+            except Exception:
+                # pypdf's encryption setup runs inside the constructor and
+                # dies on shapes it does not handle -- NotImplementedError
+                # for a DRM handler, AttributeError for a null /Encrypt
+                # (FN-20). Only a file that declares encryption gets that
+                # benefit of the doubt; any other crash is a real bug.
+                if _declares_encryption(path):
+                    return _unreadable(ReadIssue.UNSUPPORTED_ENCRYPTION)
+                raise
             if reader.is_encrypted and reader.decrypt("") == PasswordType.NOT_DECRYPTED:
-                raise BadPdfError(f"{path}: encrypted, no usable password")
+                return _unreadable(ReadIssue.PASSWORD)
             title = _clean(reader.metadata.title) if reader.metadata else None
             author = _clean(reader.metadata.author) if reader.metadata else None
             page_texts = (page.extract_text() or "" for page in reader.pages[:_ISBN_SCAN_PAGES])
             isbns = extract_isbns("\n".join(page_texts))
     except PdfReadError as exc:
-        raise BadPdfError(f"{path}: not a valid PDF file") from exc
+        raise BadPdfError(
+            f"{path}: not a valid PDF file (damaged, or not a PDF); "
+            "check that it opens in a PDF reader"
+        ) from exc
 
     return ParsedMetadata(title=title, author=author, isbns=isbns, isbns_scraped=True)
+
+
+def _unreadable(issue: ReadIssue) -> ParsedMetadata:
+    """An intact PDF whose contents bookman cannot read: nothing but the reason."""
+    return ParsedMetadata(title=None, author=None, isbns=[], isbns_scraped=True, read_issue=issue)
+
+
+def _declares_encryption(path: Path) -> bool:
+    """Whether the file names an `/Encrypt` entry anywhere -- the trailer
+    key every encrypted PDF carries. A byte search, because the parse that
+    would find it properly is what just failed."""
+    return b"/Encrypt" in path.read_bytes()
 
 
 @contextmanager

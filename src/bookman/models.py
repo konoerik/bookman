@@ -34,6 +34,51 @@ class MatchBasis(str, Enum):
     side so nothing corroborated it."""
 
 
+class ReadIssue(str, Enum):
+    """Why bookman could not read inside a file it still imported.
+
+    Such a file is really of its format -- intact, and a book the user
+    bought -- but its contents are closed to bookman, so it was
+    cataloged on its filename alone (spec PR6, ADR-29). Recorded on the
+    `BookFormat`, not the `Book`: a book whose other format was readable
+    is not the worse for it. `advice` is the sentence to show the user.
+    """
+
+    NEEDS_CRYPTO = "needs_crypto"
+    """Encrypted with AES, and bookman's optional crypto support is not installed."""
+
+    PASSWORD = "password"
+    """Protected by a password, and an empty one does not open it."""
+
+    UNSUPPORTED_ENCRYPTION = "unsupported_encryption"
+    """Declares encryption bookman cannot handle: a DRM security handler,
+    or an encryption entry too damaged to read."""
+
+    @property
+    def advice(self) -> str:
+        """What happened and what to do about it, as one sentence for a
+        person: the next step is always named."""
+        return _READ_ISSUE_ADVICE[self]
+
+
+_READ_ISSUE_ADVICE = {
+    ReadIssue.NEEDS_CRYPTO: (
+        "the file is encrypted and bookman's optional crypto support is not installed, "
+        "so bookman named the book after the file; install bookman[crypto], then delete "
+        "this book's folder and import the file again to read its title, author and ISBN"
+    ),
+    ReadIssue.PASSWORD: (
+        "the file is protected by a password, so bookman named the book after the file; "
+        "check its title and author, and correct them by hand if needed"
+    ),
+    ReadIssue.UNSUPPORTED_ENCRYPTION: (
+        "the file uses encryption bookman cannot read (DRM, or a damaged encryption entry), "
+        "so bookman named the book after the file; check its title and author, "
+        "and correct them by hand if needed"
+    ),
+}
+
+
 _BASIS_STRENGTH = {
     MatchBasis.ISBN: 3,
     MatchBasis.TITLE_AUTHOR: 2,
@@ -63,10 +108,21 @@ def stronger_basis(a: MatchBasis | None, b: MatchBasis | None) -> MatchBasis | N
 
 @dataclass(frozen=True)
 class BookFormat:
-    """A single on-disk file representing one format of a Book."""
+    """A single on-disk file representing one format of a Book.
+
+    Attributes:
+        kind: The file's format.
+        path: Where the file is, inside the book's folder.
+        read_issue: Why bookman could not read inside this file, or None
+            if it could. The book was named after the file, so a
+            later, readable import of the same file is a different book
+            to bookman: the way back is to delete the folder and import
+            again, which is what `ReadIssue.advice` says.
+    """
 
     kind: FormatKind
     path: Path
+    read_issue: ReadIssue | None = None
 
 
 @dataclass

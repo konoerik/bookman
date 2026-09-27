@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import filecmp
 import logging
+import os
 import re
 import shutil
 from collections.abc import Iterator, Sequence
@@ -32,6 +33,7 @@ from bookman.models import (
     BookFormat,
     FormatKind,
     MatchBasis,
+    ReadIssue,
     stronger_basis,
     weaker_basis,
 )
@@ -267,15 +269,31 @@ class Library:
             directory = book.directory
             _refuse_conflicting_format(book, path, kind, join, found, title=title)
 
-        _place_format(book, directory, path, kind)
-        cover_url = _apply_identification(book, found, join, title=title)
-        if cover_url:
-            self._save_cover(book, directory, cover_url)
-        if book.cover_path is None and kind == FormatKind.EPUB:
-            # IDENT-6 (ADR-28): no record cover, so the EPUB's own.
-            self._save_embedded_cover(book, directory, path)
-
-        self._persist(book, directory)
+        try:
+            _place_format(book, directory, path, kind, parsed.read_issue)
+            cover_url = _apply_identification(book, found, join, title=title)
+            if cover_url:
+                self._save_cover(book, directory, cover_url)
+            if book.cover_path is None and kind == FormatKind.EPUB:
+                # IDENT-6 (ADR-28): no record cover, so the EPUB's own.
+                self._save_embedded_cover(book, directory, path)
+            if match is not None and not _folder_already_named(
+                directory.name, _sanitize_dirname(book.title)
+            ):
+                # GROUP-4 (ADR-36): an upgrade changed the title; the
+                # folder and files follow it, as they do for an edit.
+                old_name = directory.name
+                self._rename_folder(book, directory)
+                self._catalog.relocate(old_name, book)
+                _log.info("renamed %r -> %r on import", old_name, book.title)
+            else:
+                self._persist(book, directory)
+        except BaseException:
+            if match is None:
+                # ADR-35: a folder this import created, and never finished,
+                # holds nothing anyone has seen. Leave no half-imported book.
+                shutil.rmtree(directory, ignore_errors=True)
+            raise
         return book
 
     def iter_import(self, directory: Path, *, recursive: bool = False) -> Iterator[ImportEvent]:
@@ -605,7 +623,11 @@ class Library:
 
         new_stem = target.name
         book.formats = [
-            BookFormat(kind=fmt.kind, path=_rename_in_place(fmt.path, new_stem))
+            BookFormat(
+                kind=fmt.kind,
+                path=_rename_in_place(fmt.path, new_stem),
+                read_issue=fmt.read_issue,
+            )
             for fmt in book.formats
         ]
         # The cover is always "cover.png", not named after the folder,
@@ -615,7 +637,8 @@ class Library:
         directory.rename(target)
         book.directory = target
         book.formats = [
-            BookFormat(kind=fmt.kind, path=target / fmt.path.name) for fmt in book.formats
+            BookFormat(kind=fmt.kind, path=target / fmt.path.name, read_issue=fmt.read_issue)
+            for fmt in book.formats
         ]
         if book.cover_path is not None:
             book.cover_path = target / book.cover_path.name
@@ -787,21 +810,34 @@ def _refuse_conflicting_format(
         )
 
 
-def _place_format(book: Book, directory: Path, source: Path, kind: FormatKind) -> None:
+def _place_format(
+    book: Book, directory: Path, source: Path, kind: FormatKind, read_issue: ReadIssue | None
+) -> None:
     """Copy `source` into `directory` as `<folder name><suffix>` and make
-    it `book`'s file for `kind`.
+    it `book`'s file for `kind`, recording why its contents could not be
+    read if they could not (spec PR6).
 
     Any previous file of the same kind under a different name (a
     pre-0.3 `book<suffix>`) is deleted, and its entry replaced, so a
     book never lists two files of one kind. The source is left in place.
+
+    The copy goes to `<dest>.partial` and is renamed into place only once
+    complete (ADR-35), so a copy that fails -- a full disk -- leaves no
+    truncated file behind and never damages a file already at `dest`.
     """
     dest = directory / f"{directory.name}{source.suffix.lower()}"
-    shutil.copyfile(source, dest)
+    partial = dest.with_name(f"{dest.name}.partial")
+    try:
+        shutil.copyfile(source, partial)
+        os.replace(partial, dest)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
     for fmt in book.formats:
         if fmt.kind == kind and fmt.path != dest:
             fmt.path.unlink(missing_ok=True)
     book.formats = [fmt for fmt in book.formats if fmt.kind != kind]
-    book.formats.append(BookFormat(kind=kind, path=dest))
+    book.formats.append(BookFormat(kind=kind, path=dest, read_issue=read_issue))
 
 
 def _apply_identification(

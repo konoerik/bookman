@@ -3,6 +3,7 @@ import pytest
 from bookman.identify.match import (
     author_surnames,
     authors_agree,
+    is_file_name_title,
     is_generic_title,
     is_usable_title,
     match_basis,
@@ -76,6 +77,62 @@ def test_titles_agree_keeps_editions_apart_and_matches_the_same_one():
     assert not titles_agree(second, plain)
     assert not titles_agree(second, "Algorithmic Thinking, 3rd Edition")
     assert titles_agree(second, "Algorithmic Thinking (Second ed.)")
+
+
+@pytest.mark.parametrize(
+    ("title", "normalized"),
+    [
+        # FIELD-NOTES FN-15: the marker used to go with the brackets.
+        ("Stoicism Today: Selected Writings (Volume 1)", "stoicism today volume 1"),
+        ("Stoicism Today: Selected Writings (Volume Two) (Volume 2)", "stoicism today volume 2"),
+        ("The Art of Computer Programming, Vol. 3", "art of computer programming volume 3"),
+        ("Foundations: Part II", "foundations volume 2"),
+        (
+            "Write Great Code, Volume 1: Understanding the Machine, 2nd Edition",
+            "write great code volume 1 edition 2",
+        ),
+    ],
+)
+def test_normalize_title_lifts_a_volume_marker(title, normalized):
+    assert normalize_title(title) == normalized
+
+
+def test_normalize_title_leaves_a_title_that_is_only_a_marker_alone():
+    assert normalize_title("Volume 1") == "volume 1"
+
+
+def test_titles_agree_keeps_volumes_apart_and_matches_the_same_one():
+    assert not titles_agree(
+        "Stoicism Today: Selected Writings (Volume 1)",
+        "Stoicism Today: Selected Writings (Volume Two)",
+    )
+    assert titles_agree("Stoicism Today (Volume 2)", "Stoicism Today: Volume Two")
+    assert titles_agree("Foundations, Part 2", "Foundations: Part II")
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        # FIELD-NOTES FN-11: what InDesign and FrameMaker write into /Title.
+        "css.indb",
+        "Book 1.indb",
+        "9781683924708_A&MLPP_PRESS.indb",
+        "book_insert.indd",
+        "482387_1_En_Print.indd",
+        "CC_03.book",
+        "hack2e_03.book",
+        "chapter1.docx",
+    ],
+)
+def test_normalize_title_of_a_bare_document_filename_is_empty(filename):
+    assert normalize_title(filename) == ""
+    assert is_file_name_title(filename)
+
+
+@pytest.mark.parametrize("real", ["Node.js in Action", "The Jungle Book", "ASP.NET Core"])
+def test_a_real_title_with_a_dot_is_not_a_filename(real):
+    assert normalize_title(real)
+    assert not is_file_name_title(real)
 
 
 def test_normalize_title_strips_leading_article_and_punctuation():
@@ -183,6 +240,73 @@ def test_titles_agree_treats_differing_volume_numbers_as_different_books(a, b):
     assert not titles_agree(a, b)
 
 
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # FIELD-NOTES FN-14: one swapped word is under 10 % of a long title.
+        (
+            "Microsoft® Excel® 2019 Programming by Example",
+            "Microsoft Access 2019 Programming by Example",
+        ),
+        ("Learning Python Programming", "Learning Ruby Programming"),
+        # A dropped word is the same class of evidence as a swapped one.
+        ("Designing Data-Intensive Applications", "Designing Data-Intensive Web Applications"),
+    ],
+)
+def test_titles_agree_never_bridges_a_whole_word(a, b):
+    assert not titles_agree(a, b)
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("Introduction to Algorithms", "Introduction to Algorithm"),  # plural
+        ("Programing Rust", "Programming Rust"),  # typo
+        ("Colour Science", "Color Science"),  # variant spelling
+        ("Data Analysis", "Data Analyses"),
+    ],
+)
+def test_titles_agree_allows_fuzz_within_a_word(a, b):
+    assert titles_agree(a, b)
+
+
+def test_titles_agree_on_words_run_together():
+    assert titles_agree(
+        "Tkinter GUI ApplicationDevelopment HOTSHOT", "Tkinter GUI Application Development Hotshot"
+    )
+
+
+def test_normalize_title_drops_a_trailing_inverted_article():
+    assert normalize_title("Pragmatic Programmer, The") == "pragmatic programmer"
+    assert normalize_title("Tale of Two Cities, A") == "tale of two cities"
+    # Only when set off by a comma at the very end: a real word stays.
+    assert normalize_title("Lord of the Rings") == "lord of the rings"
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # FIELD-NOTES FN-16: a colon that is part of the title, dropped by
+        # one source, used to leave "python 3" against the whole title.
+        ("Python 3: Pocket Primer", "PYTHON 3 Pocket Primer"),
+        ("Python: An Introduction to Programming", "Python An Introduction to Programming"),
+        ("TensorFlow 2.0: Pocket Primer", "TensorFlow 2.0 Pocket Primer"),
+    ],
+)
+def test_titles_agree_when_the_full_forms_agree(a, b):
+    assert titles_agree(a, b)
+
+
+def test_titles_agree_on_full_forms_still_keeps_different_subtitles_apart():
+    # The full forms differ, and so do the stripped ones here.
+    assert not titles_agree("Python 3: Pocket Primer", "PYTHON 3 Cookbook Primer")
+
+
+def test_match_basis_without_an_author_still_needs_identical_stripped_titles():
+    # MATCH-3 takes no fuzz and no full-form second chance.
+    assert match_basis("Python 3: Pocket Primer", None, "PYTHON 3 Pocket Primer", None) is None
+
+
 def test_titles_agree_keeps_fuzz_when_numbers_match():
     assert titles_agree("The Lord of the Rings Volume 1", "Lord of the Rings, Volume 1")
     assert titles_agree("Fahrenheit 451", "Fahrenheit 451 (50th Anniversary Edition)")
@@ -223,7 +347,18 @@ def test_match_basis_missing_author_identical_title_is_title_only():
 
 
 def test_match_basis_missing_author_fuzzy_title_is_none():
-    assert match_basis("The Pragmatic Programmer", None, "Pragmatic Programmer, The", None) is None
+    # MATCH-3 takes no fuzz. (This used the inverted "Pragmatic
+    # Programmer, The", which MATCH-0 now normalizes to the same title.)
+    assert (
+        match_basis("Introduction to Algorithms", None, "Introduction to Algorithm", None) is None
+    )
+
+
+def test_match_basis_inverted_article_is_the_same_title_without_an_author():
+    assert (
+        match_basis("The Pragmatic Programmer", None, "Pragmatic Programmer, The", None)
+        == MatchBasis.TITLE_ONLY
+    )
 
 
 def test_match_basis_missing_title_is_none():

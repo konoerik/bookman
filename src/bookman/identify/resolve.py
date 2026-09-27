@@ -11,16 +11,23 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TypeVar
 
 from bookman.formats.base import ParsedMetadata
-from bookman.identify.match import is_usable_author, is_usable_title, match_basis
+from bookman.identify.match import (
+    is_file_name_title,
+    is_usable_author,
+    is_usable_title,
+    match_basis,
+)
 from bookman.identify.source import Candidate, MetadataSource, MetadataSourceError
 from bookman.models import MatchBasis, stronger_basis
 
 T = TypeVar("T")
+_TRAILING_BRACKETS = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$")
 _log = logging.getLogger("bookman.identify")
 
 
@@ -107,6 +114,11 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
         # -- match, accept, or file-only -- sees the file as authorless.
         _log.debug("IDENT-6 ignoring stand-in author %r", parsed.author)
         parsed = replace(parsed, author=None)
+    if parsed.title is not None and parsed.author is not None and is_file_name_title(parsed.title):
+        # IDENT-6 (ADR-32): the tool that wrote its filename into the
+        # title wrote its operator's login into the author.
+        _log.debug("IDENT-6 ignoring author %r beside filename title", parsed.author)
+        parsed = replace(parsed, author=None)
     if parsed.title is not None and not is_usable_title(parsed.title):
         # IDENT-4: a placeholder ("Untitled", a converter's stamp) names
         # no book. Treated as no title from here on, so the file-only
@@ -170,12 +182,7 @@ def identify(parsed: ParsedMetadata, source: MetadataSource) -> Identification:
     file_title = parsed.title
     if file_title:
         # IDENT-5: candidates are proposals; each must pass MATCH on its own.
-        candidates = (
-            _safe(
-                lambda: source.search(file_title, parsed.author), f"IDENT-5 search {file_title!r}"
-            )
-            or []
-        )
+        candidates = _search(source, file_title, parsed.author)
         best: tuple[Candidate, MatchBasis] | None = None
         for record in candidates:
             basis = match_basis(parsed.title, parsed.author, record.title, record.author)
@@ -249,6 +256,32 @@ def _accepted(
         record_author=record.author,
         isbns=_claimed(parsed, rejected),
     )
+
+
+def _search(source: MetadataSource, title: str, author: str | None) -> list[Candidate]:
+    """IDENT-5's search (ADR-37): the title without a trailing bracketed
+    tag ("(Humble)"), by author when there is one; and if that finds
+    nothing at all, by title alone -- an author string the source does
+    not index must not hide the book. The caller still judges every
+    candidate with the file's own author."""
+    query = _search_title(title)
+    candidates = _safe(lambda: source.search(query, author), f"IDENT-5 search {query!r}") or []
+    if not candidates and author:
+        _log.debug("IDENT-5 nothing for %r by %r; searching by title alone", query, author)
+        candidates = _safe(lambda: source.search(query, None), f"IDENT-5 search {query!r}") or []
+    return candidates
+
+
+def _search_title(title: str) -> str:
+    """`title` without trailing parenthesized or bracketed groups, unless
+    nothing would be left."""
+    query = title
+    while True:
+        shorter = _TRAILING_BRACKETS.sub("", query)
+        if shorter == query:
+            break
+        query = shorter
+    return query.strip() or title
 
 
 def _safe(call: Callable[[], T], what: str) -> T | None:

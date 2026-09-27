@@ -8,7 +8,7 @@ from helpers import make_pdf as _make_pdf
 from bookman import cli, config
 from bookman.identify.source import Candidate
 from bookman.library import Library
-from bookman.models import Book, BookFormat, FormatKind, MatchBasis
+from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 
 
 @pytest.fixture(autouse=True)
@@ -547,3 +547,76 @@ def test_import_directory_counts_conflicts_apart_from_failures(tmp_path, capsys)
     assert "imported: Sapiens" in out
     assert "1 imported, 0 failed, 1 not imported (already have that format)" in out
     assert "same title only -- check it is really the same book" in err
+
+
+def test_import_explains_a_pdf_it_could_not_read_and_what_to_do(tmp_path, capsys):
+    # ADR-29: imported, not failed -- and the next step is named.
+    library_root = tmp_path / "Library"
+    batch = tmp_path / "bundle"
+    batch.mkdir()
+    _make_pdf(batch / "Righting Software.pdf", password="secret")
+
+    code = cli.main(["--library", str(library_root), "import", str(batch)])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "imported: Righting Software (pdf)" in out
+    assert "could not read inside Righting Software.pdf: the file is protected by a password" in out
+    assert "check its title and author" in out
+    assert "1 imported, 0 failed" in out
+
+
+def test_import_names_the_folder_to_delete_when_the_crypto_extra_is_missing(
+    tmp_path, capsys, monkeypatch
+):
+    from pypdf.errors import DependencyError
+
+    from bookman.formats import pdf as pdf_module
+
+    def reader_without_backend(path):
+        raise DependencyError("cryptography>=3.1 is required for AES algorithm")
+
+    monkeypatch.setattr(pdf_module, "PdfReader", reader_without_backend)
+    library_root = tmp_path / "Library"
+    source = _make_pdf(tmp_path / "Righting Software.pdf", password="")
+
+    code = cli.main(["--library", str(library_root), "import", str(source)])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "install bookman[crypto], then delete this book's folder" in out
+    assert f"folder: {(library_root / 'Righting Software').resolve()}" in out
+
+
+def test_list_says_why_an_unreadable_book_needs_review(tmp_path):
+    book = Book(title="Righting Software", author=None, isbn=None)
+    book.formats = [
+        BookFormat(
+            kind=FormatKind.PDF,
+            path=tmp_path / "x.pdf",
+            read_issue=ReadIssue.UNSUPPORTED_ENCRYPTION,
+        )
+    ]
+    assert "[NEEDS REVIEW: could not read the pdf (unsupported encryption)]" in cli._format_book(
+        book
+    )
+
+
+def test_import_says_what_to_do_when_the_disk_is_full(tmp_path, capsys, monkeypatch):
+    # ADR-35 (FIELD-NOTES FN-18): nothing is left behind, and the message
+    # says so and names the next step.
+    import errno
+
+    def full_disk(src, dst, *args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device", str(dst))
+
+    monkeypatch.setattr("bookman.library.shutil.copyfile", full_disk)
+    library_root = tmp_path / "Library"
+    source = _make_epub(tmp_path / "TinyML.epub", title="TinyML")
+
+    code = cli.main(["--library", str(library_root), "import", str(source)])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "not enough disk space to copy it into the library" in err
+    assert "free up space, then import it again" in err

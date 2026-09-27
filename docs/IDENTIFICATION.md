@@ -39,7 +39,7 @@ they both call (ADR-9). **Parse** appears only as the input boundary and
 
 ```mermaid
 flowchart TD
-    PARSE["PARSE<br/>title, author, ISBNs,<br/>and how the ISBNs were found"]
+    PARSE["PARSE<br/>title, author, ISBNs,<br/>and how the ISBNs were found<br/>(or why the file could not be read)"]
 
     PARSE --> IDENT1{"IDENT-1<br/>Any ISBN in the file?"}
 
@@ -165,6 +165,13 @@ ISBN: `asserted` from a metadata field, `scraped` from page text (ADR-14),
 | 25 | MATCH-2 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking (Second ed.) | Daniel Zingaro | — | TITLE_AUTHOR | The same edition however it is written (C7) |
 | 26 | MATCH-2 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking, 3rd Edition | Daniel Zingaro | — | none | Two markers must agree (C7) |
 | 27 | MATCH-1 | Algorithmic Thinking, 2nd Edition | Daniel Zingaro | Algorithmic Thinking | Daniel Zingaro | asserted | ISBN | A shared ISBN with the author vouching still wins: the record is the edition (C7, B5) |
+| 28 | MATCH-2 | Microsoft Excel 2019 Programming by Example | Julitta Korol | Microsoft Access 2019 Programming by Example | Julitta Korol | — | none | Fuzz never bridges a whole word (C19, FN-14) |
+| 29 | MATCH-2 | Tkinter GUI ApplicationDevelopment Hotshot | Bhaskar Chaudhary | Tkinter GUI Application Development Hotshot | Bhaskar Chaudhary | — | TITLE_AUTHOR | Words run together are the same words (C19) |
+| 30 | MATCH-2 | Pragmatic Programmer, The | David Thomas | The Pragmatic Programmer | David Thomas | — | TITLE_AUTHOR | A trailing inverted article is dropped by MATCH-0 (C19) |
+| 31 | MATCH-2 | Stoicism Today: Selected Writings (Volume 1) | Patrick Ussher | Stoicism Today: Selected Writings (Volume Two) | Patrick Ussher | — | none | A volume marker survives the bracket and subtitle rules (C20, FN-15) |
+| 32 | MATCH-2 | Stoicism Today: Selected Writings (Volume 2) | Patrick Ussher | Stoicism Today: Volume Two | Patrick Ussher | — | TITLE_AUTHOR | The same volume however it is written (C20) |
+| 33 | MATCH-1 | css.indb | radha | C Programming Pocket Primer | Oswald Campesato | scraped | ISBN | A layout tool's filename is no title, so it cannot veto the ISBN (A17, FN-11) |
+| 34 | MATCH-2 | Python 3: Pocket Primer | Oswald Campesato | PYTHON 3 Pocket Primer | Oswald Campesato | — | TITLE_AUTHOR | A colon that is not a subtitle: the full forms agree (C21, FN-16) |
 
 Rows are added when a rule is added, not when a bug is found — a bug means
 the code disagrees with a row that already exists, which is a
@@ -177,8 +184,8 @@ Step IDs are stable — cite them from FEATURES rows, ADRs and commit
 messages.
 
 ```yaml
-spec_version: 5
-updated: 2026-09-20
+spec_version: 6
+updated: 2026-09-26
 scope: identify + group, and the match rule they share
 derived_from:
   - CLAUDE.md                # project goal and scope
@@ -196,6 +203,14 @@ derived_from:
   - ADR-26                   # GROUP-1 joins on any ISBN the file carries
   - ADR-27                   # an ISBN-identified follow-up upgrades only through the joined ISBN
   - ADR-28                   # the EPUB's embedded cover when the record supplies none
+  - ADR-29                   # a file bookman cannot read inside is imported anyway, with the reason kept
+  - ADR-30                   # title fuzz stays within a word; a trailing inverted article is dropped
+  - ADR-31                   # a volume marker survives MATCH-0 like an edition marker
+  - ADR-32                   # a bare document filename is a placeholder title; the author beside it is dropped
+  - ADR-33                   # an EPUB with no ISBN in its metadata has its front matter scanned, as scraped
+  - ADR-34                   # titles also agree when their full forms (subtitle kept) agree
+  - ADR-36                   # an import that upgrades the title renames the folder, like an edit
+  - ADR-37                   # search without a trailing bracket tag; retry by title alone when empty
   - FIELD-NOTES.md           # shapes seen in real bundles; FN-n cited where a rule came from one
 # FEATURES rows named in `sources:` below are illustrative scenarios,
 # not sources of authority. See the History note at the top of this file.
@@ -231,6 +246,15 @@ principles:
       may name Open Library; a second source must be addable without
       changing any rule here.
     sources: [ADR-13]
+  - id: PR6
+    rule: >
+      A bought book always lands in the library. A file that is really
+      of its format but whose contents bookman cannot read -- encrypted
+      in a way it cannot open, or behind a password -- is imported with
+      nothing but its filename to go on, and the reason is kept on the
+      file so a frontend can say what to do about it. Only a file that
+      is not the format at all (damaged, or misnamed) fails.
+    sources: [ADR-29, "FIELD-NOTES FN-12", "FIELD-NOTES FN-20"]
 
 inputs:
   from_parse:
@@ -245,8 +269,21 @@ inputs:
       note: >
         asserted = read from a structured metadata field; scraped =
         scanned out of page text, and therefore possibly a *cited*
-        book's rather than this one's.
-      sources: [ADR-14, "FEATURES B6"]
+        book's rather than this one's. Page text is a PDF's first pages,
+        or an EPUB's front matter (its first spine documents) when the
+        EPUB's metadata declares no ISBN at all (ADR-33).
+      sources: [ADR-14, ADR-33, "FEATURES B6", "FEATURES B12"]
+    - name: read_issue
+      values: [none, needs_crypto, password, unsupported_encryption]
+      note: >
+        Why the file's contents could not be read, when they could not
+        (PR6). Such a file arrives with no title, no author and no
+        ISBNs, and walks the pipeline like any file that says nothing
+        about itself: IDENT-1 finds no ISBN, IDENT-4 no title, so it is
+        identified by nothing and named after its filename stem. The
+        reason stays on the file, not the book: a book whose other
+        format was readable is not the worse for it.
+      sources: [ADR-29, "FEATURES H5", "FEATURES H14"]
 
 steps:
 
@@ -266,16 +303,32 @@ steps:
         one, and a title that carries one does not agree with one that
         does not. A different edition is a different book (ADR-23), and
         an unmarked title is not assumed to be the first edition.
+      - >
+        Lift out a *volume marker* the same way and for the same reason:
+        "Volume 1", "Vol. 2", "Part II", "Volume Two", wherever it sits
+        (ADR-31). Its number is read as a numeral, whether written in
+        digits, roman numerals or words, and put back at the end, so
+        "(Volume Two)" and "Volume 2" agree and "Volume 1" does not
+        agree with either. Without this, a marker in a subtitle or in
+        brackets is dropped with them and two volumes normalize to the
+        same title (FIELD-NOTES FN-15).
       - Drop a subtitle introduced by ":", ";", a spaced dash, or an em/en dash.
       - Drop a trailing parenthesized or bracketed group (other edition notes).
       - Drop a leading English article.
+      - >
+        Drop a trailing one set off by a comma, the library catalog's
+        inverted form: "Pragmatic Programmer, The" is "The Pragmatic
+        Programmer" (ADR-30).
       - Strip punctuation and collapse whitespace.
       - >
         A *placeholder* title names no book — "Untitled", "Untitled
-        Document 2", "No Title", or a converter's filename stamp such as
-        "Microsoft Word - chapter1.docx". It reduces to nothing and from
-        here on is treated exactly as a missing title.
-    sources: [ADR-9, ADR-15, ADR-23, "FEATURES C1-C8", "FEATURES C11", "FEATURES C13", "FEATURES A12"]
+        Document 2", "No Title", a converter's filename stamp such as
+        "Microsoft Word - chapter1.docx", or a bare document filename
+        a layout tool wrote into the field ("css.indb", "CC_03.book",
+        "482387_1_En_Print.indd"; FIELD-NOTES FN-11, ADR-32). It reduces
+        to nothing and from here on is treated exactly as a missing
+        title.
+    sources: [ADR-9, ADR-15, ADR-23, ADR-30, ADR-31, "FEATURES C1-C8", "FEATURES C11", "FEATURES C13", "FEATURES A12"]
     unspecified:
       - >
         Edition markers without an ordinal — "Revised Edition",
@@ -337,6 +390,26 @@ steps:
         nobody ("Anonymous", "Unknown", "Various"). A name that is only
         a placeholder is no author.
       - Several authors may be listed; sharing one of them is agreement.
+      - >
+        Title fuzz stays *within* a word. The two titles must be the
+        same words in the same order, each pair identical or a near
+        spelling of the other — a plural, a typo, a variant spelling —
+        and close overall. A word swapped for a different word is a
+        different book however long the rest of the title: "Microsoft
+        Excel 2019 Programming by Example" is not "Microsoft Access 2019
+        Programming by Example" (FIELD-NOTES FN-14). Words merely run
+        together or split apart ("ApplicationDevelopment") are the same
+        words.
+        sources: ADR-30, FEATURES C19
+      - >
+        Two titles also agree when their *full* forms do — MATCH-0's
+        steps without the subtitle rule. A colon is not always a
+        subtitle: "Python 3: Pocket Primer" and "PYTHON 3 Pocket
+        Primer" are one title, which the subtitle rule cuts down to
+        "python 3" on one side only (FIELD-NOTES FN-16). The same fuzz
+        rules apply to the full forms. MATCH-3's identical-title test
+        uses the subtitle-stripped form only.
+        sources: ADR-34, FEATURES C21
     outcomes:
       - when: authors disagree
         then: No match, whatever the titles say. This is the strongest veto in the rule.
@@ -450,8 +523,22 @@ steps:
 
   - id: IDENT-5
     stage: identify
-    does: Choose among the candidates the search returns.
+    does: Search the source, and choose among the candidates it returns.
     rules:
+      - >
+        The query is the file's title without a trailing bracketed group
+        — a vendor's tag such as "(Humble)", or an edition note — which
+        the source's titles do not carry and which makes its search come
+        back empty (FIELD-NOTES FN-13). The title itself is unchanged:
+        it is still what MATCH compares, and still the book's (ADR-10).
+        sources: ADR-37, FEATURES E16
+      - >
+        If searching by title and author returns nothing at all, search
+        again by title alone. An author string the source does not index
+        ("CPA  Michele Cagan") must not hide the book; the author is
+        not given up, since every candidate is still judged by MATCH
+        with the file's author, so a wrong author still vetoes.
+        sources: ADR-37, FEATURES E16
       - Candidates are proposals; each must pass MATCH on its own.
       - Relevance order does not decide — a later candidate may win.
       - The strongest basis wins.
@@ -495,6 +582,14 @@ steps:
         author. (Both kinds are equally *no evidence* at MATCH-2; the
         distinction is only about what is worth keeping.)
         sources: ADR-22, FEATURES A9, FEATURES D14
+      - >
+        An author that arrived beside a bare-filename title is no author
+        either. The layout tool that wrote the filename into the title
+        wrote its operator's login into the author — "radha", "user", a
+        job number — in every case seen (FIELD-NOTES FN-11). It is
+        dropped with the title, so the record's author, or a companion
+        file's, fills the blank instead.
+        sources: ADR-32, FEATURES A17
       - >
         The record's author is kept beside the book's own, as
         `record_author`, so a frontend can show what the source says and
@@ -592,8 +687,13 @@ steps:
         sources: ADR-4, FEATURES F8
       - >
         A follow-up that identifies more strongly upgrades the book's
-        metadata and cover.
-        sources: FEATURES F7
+        metadata and cover. When that changes the title, the folder and
+        the files in it are renamed to the new title, exactly as a
+        title edit renames them: the folder is named after the title
+        (ADR-1), and a folder still carrying "Statistics 101 (Humble)"
+        beside a book titled "Statistics 101" is the library contradicting
+        itself (FIELD-NOTES FN-17).
+        sources: FEATURES F7, ADR-36
       - >
         Except on an ISBN join: a follow-up identified *by ISBN* upgrades
         the book only when its record was reached through the ISBN the

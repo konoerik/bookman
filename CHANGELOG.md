@@ -6,6 +6,47 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+From running the rest of the author's library (340 books, 603 files)
+through bookman; see `docs/FIELD-NOTES.md`, FN-11..21.
+
+### Added
+- `ReadIssue` and `BookFormat.read_issue`: why bookman could not read
+  inside a file it still imported, with `ReadIssue.advice` naming the
+  next step (ADR-29).
+- `bookman[crypto]` optional extra (PyCryptodome) to read AES-encrypted
+  PDFs, such as every InformIT PDF (ADR-29).
+- An EPUB whose metadata declares no ISBN has its front matter scanned
+  for one, flagged as scraped (Packt; ADR-33).
+
+### Changed
+- A PDF bookman cannot read inside -- AES without the extra, a real
+  password, a DRM handler, a null `/Encrypt` -- is imported under its
+  filename and flagged for review instead of failing (ADR-29). A file
+  that is not a PDF at all still fails, with a message saying to check
+  it opens in a PDF reader.
+- `metadata.json` schema version 5: a format entry may carry
+  `read_issue`. Version 4 files load and are upgraded on save.
+- Title fuzz stays within a word: a swapped word ("Excel" / "Access")
+  no longer matches however long the title (ADR-30). Words run together
+  still match, and a trailing inverted article ("…, The") is dropped.
+- A volume marker ("Volume 2", "Part II", "Volume Two") survives the
+  subtitle and bracket rules, so volumes stay apart (ADR-31).
+- A layout tool's filename as the title ("css.indb") is a placeholder,
+  and the operator login beside it is dropped (ADR-32).
+- Two titles also agree when their full forms do, for a colon that is
+  not a subtitle ("Python 3: Pocket Primer"; ADR-34).
+- An import whose stronger identification changes a book's title now
+  renames its folder and files, as an edit does (ADR-36).
+- Search leaves a trailing bracketed tag ("(Humble)") out of the query,
+  and retries by title alone when title and author find nothing
+  (ADR-37).
+
+### Fixed
+- A copy that fails midway (a full disk) no longer leaves a truncated
+  file or a half-imported folder, and a failed re-import no longer
+  destroys the copy already in the library; the CLI says to free up
+  space and import again (ADR-35).
+
 ## [1.0.0] - 2026-09-20
 
 First release. EPUB and PDF parsing, ISBN extraction, Open Library lookup

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from helpers import VALID_ISBN13
 from helpers import make_epub as _make_epub
@@ -7,7 +9,7 @@ from bookman.errors import FormatConflictError, UnsupportedFormatError
 from bookman.formats.epub import BadEpubError
 from bookman.identify.source import Candidate
 from bookman.library import ImportBatchResult, Library, _sanitize_dirname
-from bookman.models import Book, BookFormat, FormatKind, MatchBasis
+from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 from bookman.storage.catalog import save_metadata
 
 _LONG_PREFIX = (
@@ -142,6 +144,15 @@ def test_import_file_upgrades_identification_on_follow_up_format(tmp_path, libra
     assert book.identified == MatchBasis.ISBN
     assert book.grouped == MatchBasis.ISBN
     assert not book.needs_review
+    # ADR-36 (FIELD-NOTES FN-17): the folder and files follow the title.
+    assert book.directory == library.root / "Deep Work"
+    assert sorted(p.name for p in book.directory.iterdir()) == [
+        "Deep Work.epub",
+        "Deep Work.pdf",
+        "metadata.json",
+    ]
+    assert not (library.root / "Deep Work - Guessed Subtitle").exists()
+    assert [b.title for b in library.search("deep work")] == ["Deep Work"]
 
 
 def test_import_file_does_not_downgrade_identification_on_lookup_failure(tmp_path, library, source):
@@ -1326,3 +1337,127 @@ def test_import_directory_collects_conflicts_apart_from_failures(tmp_path, libra
     assert [path.name for path, _ in result.failed] == ["bad.epub"]
     assert [c.source.name for c in result.conflicts] == ["deep-work.epub"]
     assert result.conflicts[0].book.title == "Deep Work"
+
+
+def test_imports_a_pdf_it_cannot_read_under_its_filename(tmp_path, library):
+    # Spec PR6 (ADR-29, FIELD-NOTES FN-12/20): a bought book always lands.
+    locked = _make_pdf(
+        tmp_path / "Domain-Driven Design Distilled.pdf", title="DDD Distilled", password="secret"
+    )
+
+    book = library.import_file(locked)
+
+    assert book.title == "Domain-Driven Design Distilled"
+    assert book.author is None and book.isbn is None
+    assert book.identified is None and book.needs_review
+    assert [fmt.read_issue for fmt in book.formats] == [ReadIssue.PASSWORD]
+    [reloaded] = library.scan()
+    assert reloaded.formats[0].read_issue == ReadIssue.PASSWORD
+
+
+def test_a_readable_file_records_no_read_issue(tmp_path, library):
+    book = library.import_file(_make_pdf(tmp_path / "a.pdf", title="Deep Work"))
+    assert book.formats[0].read_issue is None
+
+
+def test_an_unreadable_pdf_in_a_batch_is_imported_not_failed(tmp_path, library):
+    batch = tmp_path / "bundle"
+    batch.mkdir()
+    _make_pdf(batch / "Righting Software.pdf", password="secret")
+
+    result = library.import_directory(batch)
+
+    assert result.failed == []
+    assert [book.title for _, book in result.imported] == ["Righting Software"]
+
+
+def test_the_read_issue_stays_on_the_unreadable_format_only(tmp_path, library):
+    # The reason belongs to the file, not the book: the EPUB was readable.
+    # (Whether the two share a book here rests on the filename stem, which
+    # the spec does not sanction as grouping evidence -- so not asserted.)
+    epub = _make_epub(tmp_path / "Righting Software.epub", title="Righting Software")
+    locked = _make_pdf(tmp_path / "Righting Software.pdf", password="secret")
+
+    library.import_file(epub)
+    library.import_file(locked)
+
+    issues = {fmt.kind: fmt.read_issue for book in library.scan() for fmt in book.formats}
+    assert issues == {FormatKind.EPUB: None, FormatKind.PDF: ReadIssue.PASSWORD}
+
+
+def test_a_pdf_titled_with_a_layout_filename_joins_its_epub_and_keeps_its_author(
+    tmp_path, library, source
+):
+    # FIELD-NOTES FN-11: the PDF used to become an orphan book named
+    # "css.indb" by "radha". Both files carry the same ISBN.
+    source.record = Candidate(
+        title="C Programming Pocket Primer", author="Oswald Campesato", cover_url=None
+    )
+    epub = _make_epub(
+        tmp_path / "c.epub",
+        title="C Programming Pocket Primer",
+        author="Oswald Campesato",
+        identifiers=[VALID_ISBN13],
+    )
+    pdf = _make_pdf(
+        tmp_path / "c.pdf", title="css.indb", author="radha", text=f"ISBN {VALID_ISBN13}"
+    )
+
+    library.import_file(epub)
+    book = library.import_file(pdf)
+
+    assert [b.title for b in library.scan()] == ["C Programming Pocket Primer"]
+    assert book.author == "Oswald Campesato"
+    assert sorted(fmt.kind.value for fmt in book.formats) == ["epub", "pdf"]
+
+
+def _disk_fills_up_after(written: bytes):
+    """A `shutil.copyfile` that writes `written` to the destination and then
+    fails the way a full disk does (FIELD-NOTES FN-18)."""
+    import errno
+
+    def copyfile(src, dst, *args, **kwargs):
+        Path(dst).write_bytes(written)
+        raise OSError(errno.ENOSPC, "No space left on device", str(dst))
+
+    return copyfile
+
+
+def test_a_failed_copy_leaves_no_half_imported_folder(tmp_path, library, monkeypatch):
+    # FN-18: the ENOSPC run left TinyML/TinyML.epub truncated, no metadata.json.
+    source = _make_epub(tmp_path / "TinyML.epub", title="TinyML")
+    monkeypatch.setattr("bookman.library.shutil.copyfile", _disk_fills_up_after(b"trunc"))
+
+    with pytest.raises(OSError):
+        library.import_file(source)
+
+    assert list(library.root.iterdir()) == []
+
+
+def test_a_failed_copy_of_a_second_format_leaves_the_book_as_it_was(tmp_path, library, monkeypatch):
+    epub = _make_epub(tmp_path / "a.epub", title="Deep Work", author="Cal Newport")
+    pdf = _make_pdf(tmp_path / "b.pdf", title="Deep Work", author="Cal Newport")
+    book = library.import_file(epub)
+    before = sorted(p.name for p in book.directory.iterdir())
+    monkeypatch.setattr("bookman.library.shutil.copyfile", _disk_fills_up_after(b"trunc"))
+
+    with pytest.raises(OSError):
+        library.import_file(pdf)
+
+    assert sorted(p.name for p in book.directory.iterdir()) == before
+    [reloaded] = library.scan()
+    assert [fmt.kind for fmt in reloaded.formats] == [FormatKind.EPUB]
+
+
+def test_a_failed_reimport_does_not_damage_the_file_already_there(tmp_path, library, monkeypatch):
+    source = _make_epub(tmp_path / "a.epub", title="Deep Work", author="Cal Newport")
+    book = library.import_file(source)
+    placed = book.formats[0].path
+    original = placed.read_bytes()
+    monkeypatch.setattr("bookman.library.shutil.copyfile", _disk_fills_up_after(b"trunc"))
+
+    with pytest.raises(OSError):
+        library.import_file(source)
+
+    assert placed.read_bytes() == original
+    assert not [p for p in book.directory.iterdir() if p.name.endswith(".partial")]

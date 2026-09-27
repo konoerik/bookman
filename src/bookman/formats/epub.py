@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -19,6 +20,14 @@ _OPF_NS = {
 }
 
 
+# How much of the reading order is front matter worth scanning for an ISBN
+# when the metadata declares none (ADR-33). Packt puts the ebook ISBN on
+# the title page (spine document 1) and in the preface (3); chapters cite
+# other editions and back matter advertises other books.
+_ISBN_SCAN_DOCUMENTS = 4
+_MARKUP = re.compile(r"<[^>]*>")
+
+
 class BadEpubError(ParseError):
     """Raised when a file is not a readable, well-formed EPUB."""
 
@@ -31,6 +40,12 @@ def parse_epub(path: Path) -> ParsedMetadata:
     <metadata> block. Candidate identifiers are validated as ISBNs via
     bookman.identify.isbn; non-ISBN identifier schemes (e.g. a bare
     UUID or DOI) are dropped rather than returned.
+
+    When no identifier is a valid ISBN, the text of the first
+    `_ISBN_SCAN_DOCUMENTS` documents of the spine -- the title page,
+    copyright page and preface -- is scanned instead, and anything found
+    is flagged `isbns_scraped` like a PDF's (ADR-33): page text may cite
+    another book.
 
     Args:
         path: Path to a .epub file.
@@ -50,18 +65,44 @@ def parse_epub(path: Path) -> ParsedMetadata:
             container_xml = _read_member(archive, _CONTAINER_PATH, path)
             opf_path = _find_opf_path(container_xml, path)
             opf_xml = _read_member(archive, opf_path, path)
+            metadata_el = _find_metadata_element(opf_xml, path)
+            identifiers = "\n".join(
+                el.text for el in metadata_el.findall("dc:identifier", _OPF_NS) if el.text
+            )
+            isbns = extract_isbns(identifiers) if identifiers else []
+            scraped = not isbns
+            if scraped:
+                isbns = extract_isbns(_front_matter_text(archive, opf_path, opf_xml))
     except zipfile.BadZipFile as exc:
         raise BadEpubError(f"{path}: not a valid EPUB (zip) file") from exc
 
-    metadata_el = _find_metadata_element(opf_xml, path)
     title = _first_text(metadata_el, "dc:title")
     author = _first_text(metadata_el, "dc:creator")
-    identifiers = "\n".join(
-        el.text for el in metadata_el.findall("dc:identifier", _OPF_NS) if el.text
-    )
-    isbns = extract_isbns(identifiers) if identifiers else []
+    return ParsedMetadata(title=title, author=author, isbns=isbns, isbns_scraped=scraped)
 
-    return ParsedMetadata(title=title, author=author, isbns=isbns)
+
+def _front_matter_text(archive: zipfile.ZipFile, opf_path: str, opf_xml: bytes) -> str:
+    """The text, markup stripped, of the first `_ISBN_SCAN_DOCUMENTS`
+    spine documents. Empty when there is no spine or a document is
+    missing -- this is a best-effort scan, not a validity check."""
+    root = ET.fromstring(opf_xml)
+    manifest = root.find("opf:manifest", _OPF_NS)
+    spine = root.find("opf:spine", _OPF_NS)
+    if manifest is None or spine is None:
+        return ""
+    hrefs = {item.get("id"): item.get("href") for item in manifest.findall("opf:item", _OPF_NS)}
+    base = posixpath.dirname(opf_path)
+    texts = []
+    for itemref in spine.findall("opf:itemref", _OPF_NS)[:_ISBN_SCAN_DOCUMENTS]:
+        href = hrefs.get(itemref.get("idref"))
+        if not href:
+            continue
+        try:
+            document = archive.read(posixpath.normpath(posixpath.join(base, href)))
+        except KeyError:
+            continue
+        texts.append(_MARKUP.sub(" ", document.decode("utf-8", errors="replace")))
+    return "\n".join(texts)
 
 
 def extract_cover(path: Path) -> bytes | None:

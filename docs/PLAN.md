@@ -6,12 +6,6 @@
 
 v1.0.0 is released. Post-1.0 work, in this order:
 
-- **More real bundles** (Humble Bundle) — run each into a scratch
-  library; log shapes in `docs/FIELD-NOTES.md`; fix only what a pattern
-  justifies. Candidates already waiting on more data: FN-4's PDF-first
-  order gap (OQ4, needs a book to remember every ISBN its files claim),
-  FN-7 (garbage PDF `/Author` overwriting a good EPUB author), FN-8
-  (MOBI adoption), FN-10 (single-creator EPUBs for multi-author books).
 - **Frontend guide `docs/API.md`** — task-oriented (open a library →
   import with progress → read the catalog → what `Book` fields mean →
   curate → errors → plug in a `MetadataSource`), with `cli.py` cited as
@@ -35,6 +29,7 @@ v1.0.0 is released. Post-1.0 work, in this order:
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- **Calibre-library run, second half** (2026-09-26): all 39 batches run fresh three times via hard links (`tools/calibre-oracle/linked.py`, local only, gitignored). FN-11..18 plus new FN-20/21 fixed spec-first as ADR-29..37: unreadable PDFs import with `ReadIssue` (schema v5) and the `bookman[crypto]` extra (PyCryptodome); fuzz within a word; volume markers; layout-filename titles; EPUB front-matter ISBN scan; full-form title agreement; atomic copy + cleanup; folder rename on title upgrade; tag-free search with title-only retry. 456/19 → 477/0 imported/failed, 23 → 12 splits, 76 → 46 needs review, 0 wrong merges. spec_version 6, 557 tests.
 - **v1.0.0 released** (2026-09-20): https://github.com/konoerik/bookman/releases/tag/v1.0.0 — wheel + sdist, installed from the Release URL into a clean venv. `v0.1.0` tag deleted (never had a Release) so 1.0.0 is the first; tag moved once onto the housekeeping commit `3c22a50` (CHANGELOG folds 0.1.0 into 1.0.0; asset glob `*.whl`/`*.tar.gz` only); stray `default.gitignore` asset removed by hand. Tag moves are classified destructive in auto mode — the user runs them.
 - Release plumbing (2026-09-20): `.github/workflows/release.yml` on `v*` tags — checks, `uv build`, tag-matches-version guard, clean-venv smoke test, GitHub Release with sdist + wheel; version 1.0.0, classifier Production/Stable, CHANGELOG `[1.0.0]`; `CONTRIBUTING.md` (uv-only, spec-first rule, bug reports as shapes); issue template for wrong match / missed grouping / missing cover; README install via Release wheel; Makefile `check`/`build`. Wheel built and smoke-tested locally.
 - First real bundle (2026-09-20): 37 No Starch/O'Reilly titles, 92 files, imported in four batches then whole. Four fixes — PDF ISBN scan 5 → 10 pages (B8), placeholder title → stem (A12), any-ISBN join + same-ISBN upgrade gate (ADR-26/27, F17/F18), EPUB embedded cover fallback (ADR-28, E15). Went from 7 split pairs and 16 covers to 0 and 37. `docs/FIELD-NOTES.md` started (FN-1..10). 485 tests.

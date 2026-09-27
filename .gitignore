@@ -26,3 +26,6 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
+
+# Temporary field-run tooling for the Calibre-library run; never committed.
+tools/calibre-oracle/

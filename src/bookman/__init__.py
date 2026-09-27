@@ -31,7 +31,7 @@ from bookman.formats.pdf import BadPdfError
 from bookman.identify.openlibrary import OpenLibraryError, OpenLibrarySource
 from bookman.identify.source import Candidate, MetadataSource, NullSource
 from bookman.library import ImportBatchResult, ImportEvent, Library
-from bookman.models import Book, BookFormat, FormatKind, MatchBasis
+from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 
 # Library convention: emit under the "bookman" logger and let the
 # application decide whether anything is shown.
@@ -60,6 +60,7 @@ __all__ = [
     "OpenLibraryError",
     "OpenLibrarySource",
     "ParseError",
+    "ReadIssue",
     "UnsupportedFormatError",
     "config_path",
     "load_config",

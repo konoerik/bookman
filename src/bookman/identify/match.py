@@ -18,9 +18,15 @@ import unicodedata
 from bookman.models import MatchBasis
 
 _FUZZY_TITLE_THRESHOLD = 0.9
+# Fuzz stays within a word (ADR-30): each aligned word pair must be at
+# least this close. Field variants ("algorithm"/"algorithms", "colour"/
+# "color") measure 0.875-0.95; a swapped word ("excel"/"access") 0.36.
+_FUZZY_WORD_THRESHOLD = 0.8
 _SUBTITLE_SEPARATORS = re.compile(r"\s*(?::|;|\s-\s|\s–\s|\s—\s|—)\s*")
 _TRAILING_BRACKETS = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$")
 _LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+")
+# The catalog's inverted form, "Pragmatic Programmer, The" (ADR-30).
+_TRAILING_ARTICLE = re.compile(r",\s*(?:the|a|an)\s*$")
 # An ordinal edition marker, anywhere in a casefolded title: "2nd edition",
 # "second edition", "2nd ed." (ADR-23). Ordinal-less markers ("revised
 # edition") are deliberately not matched -- see the spec's MATCH-0
@@ -35,6 +41,19 @@ _EDITION_MARKER = re.compile(
     r"\b(?P<ordinal>\d{1,2}(?:st|nd|rd|th)|"
     + "|".join(_ORDINAL_WORDS)
     + r")\s+(?:edition|ed\.?)(?!\w)"
+)
+# A volume marker, anywhere in a casefolded title: "volume 1", "vol. 2",
+# "part ii", "volume two" (ADR-31). Lifted like an edition marker so the
+# subtitle and bracket rules cannot discard it.
+_NUMBER_WORDS = {
+    word: str(n)
+    for n, word in enumerate("one two three four five six seven eight nine ten".split(), start=1)
+}
+_ROMAN_VALUES = {"i": 1, "v": 5, "x": 10}
+_VOLUME_MARKER = re.compile(
+    r"\b(?:volume|vol\.?|part)\s+(?P<number>\d{1,3}|"
+    + "|".join(_NUMBER_WORDS)
+    + r"|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3}))(?!\w)"
 )
 _NON_WORD = re.compile(r"[^\w\s]", re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
@@ -71,6 +90,10 @@ _JUNK_TITLE_WORDS = _PLACEHOLDER_TITLE_WORDS | _GENERIC_TITLE_WORDS
 _CONVERTER_TITLE = re.compile(
     r"^(?:microsoft\s+\w+|adobe\s+acrobat\w*|libreoffice|openoffice|pages|scrivener)\s+-\s"
 )
+# What a layout tool writes into /Title when nobody filled it in: its own
+# filename, bare ("css.indb", "CC_03.book"; FIELD-NOTES FN-11, ADR-32).
+# Page-layout and word-processor extensions only.
+_FILE_NAME_TITLE = re.compile(r"\S\.(?:indd|indb|book|fm|qxd|qxp|docx?|odt|rtf|tex|pdf)$")
 
 
 def normalize_title(title: str) -> str:
@@ -81,7 +104,12 @@ def normalize_title(title: str) -> str:
     NFKC-normalizes and casefolds, drops any subtitle (everything after
     the first `:`, `;`, ` - `, or an em/en dash), drops trailing
     parenthesized/bracketed groups (edition notes), strips a leading
-    English article, removes punctuation, and collapses whitespace.
+    English article or a trailing one set off by a comma ("Pragmatic
+    Programmer, The"), removes punctuation, and collapses whitespace.
+
+    A volume marker ("Volume 1", "Vol. 2", "Part II", "Volume Two") is
+    lifted out the same way and put back as "volume N" with the number
+    in digits (ADR-31), so "(Volume Two)" and "Volume 2" agree.
 
     An ordinal edition marker ("2nd Edition", "Second Edition", "2nd
     ed.") is lifted out *before* the subtitle and bracket rules can
@@ -108,20 +136,42 @@ def normalize_title(title: str) -> str:
         (the title was only punctuation) or nothing was ever there (a
         placeholder title).
     """
+    return _normalize(title, keep_subtitle=False)
+
+
+def full_title_form(title: str) -> str:
+    """`normalize_title` without its subtitle rule: the whole title,
+    otherwise reduced the same way.
+
+    Spec: MATCH-2's second chance (ADR-34). A colon is not always a
+    subtitle -- "Python 3: Pocket Primer" is one title -- and one source
+    dropping it must not leave "python 3" against the whole thing.
+    """
+    return _normalize(title, keep_subtitle=True)
+
+
+def _normalize(title: str, *, keep_subtitle: bool) -> str:
     text = unicodedata.normalize("NFKC", title).casefold().strip()
     text, edition = _lift_edition(text)
-    text = _SUBTITLE_SEPARATORS.split(text, maxsplit=1)[0]
+    text, volume = _lift_volume(text)
+    if not keep_subtitle:
+        text = _SUBTITLE_SEPARATORS.split(text, maxsplit=1)[0]
     while True:
         stripped = _TRAILING_BRACKETS.sub("", text)
         if stripped == text:
             break
         text = stripped
+    text = _TRAILING_ARTICLE.sub("", text)
     text = _LEADING_ARTICLE.sub("", text)
     text = _NON_WORD.sub(" ", text)
     normalized = _WHITESPACE.sub(" ", text).strip()
     if _is_junk_title(title, normalized):
         return ""
-    return f"{normalized} edition {edition}" if normalized and edition else normalized
+    if not normalized:
+        return normalized
+    if volume:
+        normalized = f"{normalized} volume {volume}"
+    return f"{normalized} edition {edition}" if edition else normalized
 
 
 def _lift_edition(text: str) -> tuple[str, str | None]:
@@ -138,6 +188,32 @@ def _lift_edition(text: str) -> tuple[str, str | None]:
     return text[: found.start()] + text[found.end() :], number
 
 
+def _lift_volume(text: str) -> tuple[str, str | None]:
+    """Remove the first volume marker from a casefolded title and return
+    the remainder with the volume number in digits ("part ii" -> "2").
+
+    Spec: MATCH-0's volume rule (ADR-31). A title that is nothing but a
+    marker is left alone, so "Volume 1" does not normalize to nothing.
+    """
+    found = _VOLUME_MARKER.search(text)
+    if found is None:
+        return text, None
+    rest = text[: found.start()] + text[found.end() :]
+    if not _NON_WORD.sub("", rest).strip():
+        return text, None
+    number = found.group("number")
+    if number.isdigit():
+        return rest, str(int(number))
+    if number in _NUMBER_WORDS:
+        return rest, _NUMBER_WORDS[number]
+    return rest, str(_roman_to_int(number))
+
+
+def _roman_to_int(numeral: str) -> int:
+    values = [_ROMAN_VALUES[ch] for ch in numeral]
+    return sum(-v if v < nxt else v for v, nxt in zip(values, values[1:] + [0], strict=True))
+
+
 def _is_junk_title(raw: str, normalized: str) -> bool:
     """Whether a title names nothing at all: a converter's filename
     stamp, or a normalized form built only from junk words and numbers,
@@ -146,12 +222,27 @@ def _is_junk_title(raw: str, normalized: str) -> bool:
     Poem" is a real title that happens to start with a junk word."""
     if _CONVERTER_TITLE.match(unicodedata.normalize("NFKC", raw).casefold().strip()):
         return True
+    if is_file_name_title(raw):
+        return True
     words = _meaningful_words(normalized)
     return (
         bool(normalized)
         and all(word in _JUNK_TITLE_WORDS for word in words)
         and any(word in _PLACEHOLDER_TITLE_WORDS for word in words)
     )
+
+
+def is_file_name_title(title: str) -> bool:
+    """Whether a raw title is a bare document filename a layout tool
+    wrote into the field ("css.indb", "482387_1_En_Print.indd").
+
+    Spec: MATCH-0's placeholder rule, and IDENT-6's rule that the
+    author beside such a title is the tool operator's, not a writer's
+    (ADR-32). The converter-stamp form ("Microsoft Word - x.docx") is a
+    placeholder too but not this: its author is often the writer.
+    """
+    text = unicodedata.normalize("NFKC", title).casefold().strip()
+    return bool(_FILE_NAME_TITLE.search(text)) and not _CONVERTER_TITLE.match(text)
 
 
 def is_generic_title(normalized_title: str) -> bool:
@@ -278,15 +369,30 @@ def authors_agree(a: str | None, b: str | None) -> bool | None:
 
 def titles_agree(a: str, b: str) -> bool:
     """Whether two titles are the same after normalization, allowing a
-    small amount of fuzz (difflib ratio >= 0.9 on the normalized forms).
+    small amount of fuzz on the normalized forms.
 
     Spec: MATCH-2's title test. The strict, fuzz-free comparison MATCH-3
     requires is done in `match_basis` directly, not here.
 
-    The fuzz never bridges a difference in numbers: "... Volume 1" and
-    "... Volume 2" (or "Part II"/"Part III") are different books however
-    long the shared prefix, so the number tokens of both normalized
-    forms must match exactly before the ratio is consulted.
+    The fuzz is for spelling noise -- a plural, a typo, "colour" and
+    "color" -- and stays *within* a word (ADR-30): the two titles must
+    have the same words in the same order, each pair identical or at
+    least `_FUZZY_WORD_THRESHOLD` alike, and be at least
+    `_FUZZY_TITLE_THRESHOLD` alike overall. A word swapped for another
+    is a different book however long the rest of the title
+    ("Microsoft Excel 2019 ..." is not "Microsoft Access 2019 ...").
+    Words merely run together or split apart ("ApplicationDevelopment")
+    are the same letters in the same order and agree.
+
+    When the subtitle-stripped forms disagree, the full forms get the
+    same test (`full_title_form`, ADR-34): "Python 3: Pocket Primer"
+    and "PYTHON 3 Pocket Primer" are one title with a colon one source
+    dropped.
+
+    The fuzz never bridges a difference in numbers either: "... Volume
+    1" and "... Volume 2" (or "Part II"/"Part III") are different books
+    however long the shared prefix, so the number tokens of both
+    normalized forms must match exactly.
 
     A title that normalizes away to nothing -- only punctuation, or a
     placeholder like "Untitled" -- agrees with nothing, not even another
@@ -302,11 +408,31 @@ def titles_agree(a: str, b: str) -> bool:
     na, nb = normalize_title(a), normalize_title(b)
     if not na or not nb:
         return False
+    return _forms_agree(na, nb) or _forms_agree(full_title_form(a), full_title_form(b))
+
+
+def _forms_agree(na: str, nb: str) -> bool:
+    """The fuzz rules of `titles_agree`, applied to one pair of forms."""
+    if not na or not nb:
+        return False
     if na == nb:
         return True
     if _number_tokens(na) != _number_tokens(nb):
         return False
-    return difflib.SequenceMatcher(None, na, nb).ratio() >= _FUZZY_TITLE_THRESHOLD
+    if na.replace(" ", "") == nb.replace(" ", ""):
+        return True
+    words_a, words_b = na.split(), nb.split()
+    if len(words_a) != len(words_b):
+        return False
+    if any(
+        _similarity(x, y) < _FUZZY_WORD_THRESHOLD for x, y in zip(words_a, words_b, strict=True)
+    ):
+        return False
+    return _similarity(na, nb) >= _FUZZY_TITLE_THRESHOLD
+
+
+def _similarity(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a, b).ratio()
 
 
 def _number_tokens(normalized_title: str) -> list[str]:
