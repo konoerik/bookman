@@ -17,11 +17,15 @@ Requires Python 3.10+. Not on PyPI yet — install the wheel attached to a
 
 ```bash
 # as a command-line tool
-uv tool install "https://github.com/konoerik/bookman/releases/download/v1.0.0/bookman-1.0.0-py3-none-any.whl"
+uv tool install "bookman[crypto] @ https://github.com/konoerik/bookman/releases/download/v1.1.0/bookman-1.1.0-py3-none-any.whl"
 
 # as a dependency of your own project
-uv add "bookman @ https://github.com/konoerik/bookman/releases/download/v1.0.0/bookman-1.0.0-py3-none-any.whl"
+uv add "bookman @ https://github.com/konoerik/bookman/releases/download/v1.1.0/bookman-1.1.0-py3-none-any.whl"
 ```
+
+The `crypto` extra (PyCryptodome) lets bookman read AES-encrypted PDFs,
+such as InformIT's. Without it such a PDF is still imported, named after
+its file, and bookman says what to install to read it.
 
 ## Usage
 

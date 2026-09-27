@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
 From running the rest of the author's library (340 books, 603 files)
 through bookman; see `docs/FIELD-NOTES.md`, FN-11..21.
 

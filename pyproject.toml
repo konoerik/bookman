@@ -1,6 +1,6 @@
 [project]
 name = "bookman"
-version = "1.0.0"
+version = "1.1.0"
 description = "Local ebook library management: identify, catalog, and organize EPUB and PDF files by title, grouping the formats of one book, independent of any frontend."
 readme = "README.md"
 authors = [
