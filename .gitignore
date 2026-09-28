@@ -29,3 +29,6 @@ htmlcov/
 
 # Temporary field-run tooling for the Calibre-library run; never committed.
 tools/calibre-oracle/
+
+# Requests from the TUI project (../bookman-tui), triaged into PLAN/FIELD-NOTES; never committed.
+inbox/
