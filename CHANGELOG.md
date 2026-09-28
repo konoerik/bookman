@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-27
+
+For frontends: one way to open the configured library, telling a
+library from any other folder, and a guide to the public API.
+
 ### Added
 - `Config.offline`: a saved setting that turns off Open Library lookups
   and cover downloads, so imports catalog each book from its file alone
@@ -241,5 +246,7 @@ ADRs in `docs/ARCHITECTURE.md` refer to them.
   by scanning text (PDF) rather than in a metadata field (EPUB);
   `match_basis` takes a matching `isbn_scraped` keyword.
 
-[Unreleased]: https://github.com/konoerik/bookman/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/konoerik/bookman/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/konoerik/bookman/releases/tag/v1.2.0
+[1.1.0]: https://github.com/konoerik/bookman/releases/tag/v1.1.0
 [1.0.0]: https://github.com/konoerik/bookman/releases/tag/v1.0.0
