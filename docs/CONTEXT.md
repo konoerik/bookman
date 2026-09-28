@@ -1,8 +1,8 @@
 # Context
 <!-- Updated by /wrap at session end. Edit manually if needed. Keep it under 8 lines. -->
 
-**Current focus:** Shipping the Calibre-run fixes (ADR-29..37) as 1.1.0 — new public API `ReadIssue`/`BookFormat.read_issue`, metadata.json schema v5, `bookman[crypto]` extra.
-**Last session (2026-09-26):** Finished the Calibre run: 39 batches re-run via hard links, FN-11..18/20/21 fixed spec-first (ADR-29..37) — 0 failed imports, splits 23 → 12, review queue 76 → 46; `tools/calibre-oracle/` stays local (gitignored).
-**Blocking:** Two spec decisions: OQ3 editions (8 of 12 remaining splits are one-side-only edition markers) and IDENT-4 divergence (code groups on the filename stem; spec says naming only).
-**Next action:** `/release` 1.1.0, then decide OQ3 with the FIELD-NOTES data.
-<!-- wrapped: 2026-09-26 -->
+**Current focus:** Working through the TUI's requests (`../bookman-tui` files them in `inbox/REQUESTS.md`), now at the top of PLAN Active ahead of OQ3/IDENT-4.
+**Last session (2026-09-27):** Triaged two rounds of TUI inbox; shipped 1.2.0: `Config.offline` + `configured_library` (ADR-38), library marker + `is_library` + `locate_library`, open-without-create (ADR-39), and the `docs/API.md` frontend guide.
+**Blocking:** Nothing; the already-in-library and lookup-outcome tasks need spec + ADR before code.
+**Next action:** `Book.added` + `ReadIssue.summary`, deciding first whether to wait and share the metadata.json v6 bump with the content hash.
+<!-- wrapped: 2026-09-27 -->

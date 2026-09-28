@@ -99,12 +99,27 @@ class LibraryNotConfiguredError(BookmanError):
     """No library root can be resolved from any source."""
 
 
+class LibraryNotFoundError(BookmanError):
+    """A library root was named, but there is no library there: the
+    folder is missing (often a drive that is not connected), is a file,
+    or holds other files and is not a bookman library.
+
+    Attributes:
+        path: The root that was named.
+    """
+
+    def __init__(self, path: Path, message: str) -> None:
+        self.path = path
+        super().__init__(message)
+
+
 __all__ = [
     "BookmanError",
     "CatalogError",
     "ConfigError",
     "FormatConflictError",
     "LibraryNotConfiguredError",
+    "LibraryNotFoundError",
     "MetadataSourceError",
     "ParseError",
     "UnsupportedFormatError",

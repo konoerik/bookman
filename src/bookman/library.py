@@ -6,6 +6,7 @@ for a consumer (e.g. the companion TUI) once implemented.
 from __future__ import annotations
 
 import filecmp
+import json
 import logging
 import os
 import re
@@ -47,6 +48,38 @@ _DIRNAME_COLON = re.compile(r"\s*:")
 _UNSAFE_DIRNAME_CHARS = re.compile(r'[\\/*?"<>|]')
 _MAX_DIRNAME_LENGTH = 150
 _log = logging.getLogger("bookman.library")
+
+# Written at a library's root when it is created or first opened, so a
+# library can be told from any other folder before it holds a book
+# (ADR-39). `layout` numbers the root's layout for a future migration.
+MARKER_NAME = ".bookman-library.json"
+_LAYOUT_VERSION = 1
+
+
+def is_library(path: Path) -> bool:
+    """Whether `path` is a bookman library. Read-only: nothing is created.
+
+    A library has a marker file at its root, written when it is created
+    or first opened. A folder from before the marker existed counts if
+    any folder directly inside it holds a book's `metadata.json`; it is
+    marked the next time a `Library` opens it.
+
+    Args:
+        path: The folder to check.
+
+    Returns:
+        True for a library. False for anything else, including a
+        missing path, a file, and an empty folder (which is not a
+        library yet, though a library can be created there).
+    """
+    if not path.is_dir():
+        return False
+    if (path / MARKER_NAME).is_file():
+        return True
+    try:
+        return any((child / "metadata.json").is_file() for child in path.iterdir())
+    except OSError:
+        return False
 
 
 class _Unset:
@@ -154,6 +187,11 @@ class Library:
     def __init__(self, root: Path, *, source: MetadataSource | None = None) -> None:
         """Open (or initialize) a managed library at `root`.
 
+        This always succeeds on a folder: it creates `root` if missing and
+        marks it as a library (see `is_library`). To open only a library
+        that already exists -- the saved one, which may be on a drive
+        that is not connected -- use `configured_library`.
+
         Args:
             root: The library's top-level directory. Created (including
                 any missing parents) if it doesn't already exist.
@@ -163,6 +201,7 @@ class Library:
         """
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        _write_marker(root)
         self._catalog = Catalog(root)
         self._source: MetadataSource = source if source is not None else OpenLibrarySource()
 
@@ -746,6 +785,18 @@ class Library:
 
 
 _DEDUP_SUFFIX = re.compile(r" \(\d+\)$")
+
+
+def _write_marker(root: Path) -> None:
+    """Mark `root` as a library unless it already is. A root that cannot
+    be written (read-only media) still opens for reading."""
+    marker = root / MARKER_NAME
+    if marker.exists():
+        return
+    try:
+        marker.write_text(json.dumps({"layout": _LAYOUT_VERSION}) + "\n", encoding="utf-8")
+    except OSError as exc:
+        _log.warning("could not mark %s as a library: %s", root, exc)
 
 
 def _folder_already_named(folder_name: str, base: str) -> bool:

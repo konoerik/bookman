@@ -10,8 +10,12 @@ import logging
 
 from bookman.config import (
     Config,
+    LibraryLocation,
+    LibraryOrigin,
     config_path,
+    configured_library,
     load_config,
+    locate_library,
     resolve_library,
     save_config,
 )
@@ -21,6 +25,7 @@ from bookman.errors import (
     ConfigError,
     FormatConflictError,
     LibraryNotConfiguredError,
+    LibraryNotFoundError,
     MetadataSourceError,
     ParseError,
     UnsupportedFormatError,
@@ -30,7 +35,7 @@ from bookman.formats.epub import BadEpubError
 from bookman.formats.pdf import BadPdfError
 from bookman.identify.openlibrary import OpenLibraryError, OpenLibrarySource
 from bookman.identify.source import Candidate, MetadataSource, NullSource
-from bookman.library import ImportBatchResult, ImportEvent, Library
+from bookman.library import ImportBatchResult, ImportEvent, Library, is_library
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 
 # Library convention: emit under the "bookman" logger and let the
@@ -52,7 +57,10 @@ __all__ = [
     "ImportBatchResult",
     "ImportEvent",
     "Library",
+    "LibraryLocation",
     "LibraryNotConfiguredError",
+    "LibraryNotFoundError",
+    "LibraryOrigin",
     "MatchBasis",
     "MetadataSource",
     "MetadataSourceError",
@@ -63,7 +71,10 @@ __all__ = [
     "ReadIssue",
     "UnsupportedFormatError",
     "config_path",
+    "configured_library",
+    "is_library",
     "load_config",
+    "locate_library",
     "resolve_library",
     "save_config",
     "supported_suffixes",

@@ -414,7 +414,7 @@ built yet: the review flag exists, the way to act on it doesn't.
 | L6 | Duplicate / already-imported detection | Re-running a bundle import shouldn't re-copy or clobber | 🔶 | Never clobbers now (F14, ADR-21): the same bytes re-import idempotently, a changed file is refused and reported. Still re-copies identical bytes and still runs the lookup for each; a hash (I11) would make both skippable |
 | L7 | Copy vs. move source files | Users who want the bundle folder gone | 🔶 💬 | Copy only (G10); a `move=` flag is cheap but changes the safety story |
 | L8 | Adopt files dropped into the library folder by hand | Users who manage some folders manually | ❌ | `scan()` skips folders without metadata.json |
-| L9 | Offline mode / no-network import | Airplane, rate limits, privacy | ❌ | Lookups run unconditionally; failures degrade gracefully (E9) but each costs a timeout |
+| L9 | Offline mode / no-network import | Airplane, rate limits, privacy | ✅ | `Config.offline`, applied by `configured_library` (ADR-38); the CLI shows it but has no switch for it, so a user edits `config.json` |
 | L10 | Exceptions a frontend can catch by name | Distinguish "bad file" from "disk full" | ✅ | All nine live under `BookmanError` and are exported from `bookman.__init__`; `test_errors` pins the hierarchy and that every exported error is a `BookmanError` |
 | L11 | MOBI / AZW3 parsing | Bundles ship them | ❌ | **Deprioritized below v1.0** (2026-09-18). MOBI is Mobipocket, Amazon-only since 2005, and Amazon itself moved off it — Send to Kindle stopped accepting MOBI in 2022; current Kindles use AZW3/KFX. It is also the most expensive format work available: ADR-2 notes there is no clean pure-Python parsing story, and ADR-3's dependency policy rules out leaning on a library. Meanwhile H6 already degrades gracefully. Revisit if a real bundle ships MOBI-only titles |
 | L12 | Bundle-level hints (Humble page title list) | Bias matching for a known batch | 🚫 | ROADMAP Ideas — deferred, not planned |
@@ -429,20 +429,20 @@ built yet: the review flag exists, the way to act on it doesn't.
 | M4 | Export catalog (JSON / CSV) | Backup, spreadsheets, other tools | ❌ | Cheap over `scan()` |
 | M5 | Relocate the library | Move to a new disk/path | 🔶 | `save_config` repoints; paths in metadata.json are relative so folders can be moved, but nothing verifies afterwards (M2) |
 | M6 | Single-writer assumption documented / enforced | Two TUI instances or TUI + CLI at once | ✅ | **Documented** 2026-09-19, in the README ("As a library") and the `Library` class docstring: one writer per root, reads are safe alongside it, concurrent imports can race on a folder and the last `metadata.json` wins. Not enforced — no lock file; deliberately, for v1.0 (a personal tool with one user at a keyboard). Enforcement would be post-1.0 |
-| M7 | Library-level metadata (schema version, created, book count) | Detect an old library, show an overview | ❌ | Nothing at the root except the index file |
+| M7 | Library-level metadata (schema version, created, book count) | Detect an old library, show an overview | 🔶 | `.bookman-library.json` at the root marks a library and holds a layout version (ADR-39); `is_library(path)`. No created date or book count |
 
 ## N. Frontend contract
 
 | ID | Concern | Why | Status | Notes |
 |---|---|---|---|---|
-| N1 | Library location resolution shared by all frontends | One config, no drift | ✅ | ADR-8 |
+| N1 | Library location resolution shared by all frontends | One config, no drift | ✅ | ADR-8; the source too, through `configured_library` (ADR-38), which opens only an existing library; `locate_library` says where the root was named (ADR-39) |
 | N2 | Minimal, explicit public surface | Semver discipline | ✅ | `__all__` is the contract, pinned by `test_public_api` (every name resolves, sorted, no duplicates); everything a frontend uses is exported (L2, L10) |
 | N3 | Type hints + docstrings on everything public | TUI author can rely on signatures | ✅ | Convention; mypy clean |
 | N4 | Network configuration: timeouts, user-agent, endpoint override, disable | Tests, rate limits, mirrors | ❌ | Hard-coded in `identify.openlibrary` |
 | N5 | Logging instead of silence | Frontend can show "lookup failed: timeout" | ❌ | Failures are swallowed into "no match"; no `logging` calls |
 | N6 | Thread-safety statement | TUI will run imports off the UI thread | ❌ | Undocumented; relates to M6 |
 | N7 | CLI covers import and inspection | A terminal user can fill a library and see what is in it (ADR-6) | ✅ | `init`, `config`, `import`, `list`, `search`. **Not** curation: `review`/`edit`/`reidentify` existed for a day (ADR-20) and were removed before release (ADR-24) — curation is the TUI's job, or a hand edit of `metadata.json`. A new `Library` operation does not get a subcommand |
-| N8 | Second metadata source (Google Books, …) behind one interface | E12-class gaps; resilience to OL outages | ❌ 💬 | CONTEXT names it as the future fix; needs a provider abstraction ADR |
+| N8 | Second metadata source (Google Books, …) behind one interface | E12-class gaps; resilience to OL outages | ❌ 💬 | CONTEXT names it as the future fix; needs a provider abstraction ADR. The TUI wants a generic sources Settings screen (2026-09-26): online/offline in the config is done (ADR-38); the registry and a record of which source supplied a book are in Backlog |
 
 ## Reading the two parts together
 

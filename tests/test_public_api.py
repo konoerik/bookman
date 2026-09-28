@@ -6,6 +6,9 @@ pin the names a frontend reaches for, so adding or dropping one is a
 deliberate, semver-visible act rather than an accident.
 """
 
+import re
+from pathlib import Path
+
 import bookman
 from bookman import library
 
@@ -27,3 +30,13 @@ def test_batch_result_is_exported_from_the_package_root():
     assert bookman.ImportBatchResult is library.ImportBatchResult
     assert "ImportEvent" in bookman.__all__
     assert bookman.ImportEvent is library.ImportEvent
+
+
+def test_every_exported_name_is_covered_by_the_frontend_guide():
+    """docs/API.md is the task-oriented guide to the public surface; a new
+    export has to find its place there (as `Name`, `Name.attr` or `Name(`)."""
+    guide = (Path(__file__).parents[1] / "docs" / "API.md").read_text(encoding="utf-8")
+    missing = [
+        name for name in bookman.__all__ if not re.search(rf"`{re.escape(name)}[`.(\[]", guide)
+    ]
+    assert not missing, f"not mentioned in docs/API.md: {missing}"

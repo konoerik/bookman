@@ -4,19 +4,63 @@
 <!-- Current sprint items. Keep this short — 5-10 items max.
      If it grows beyond that, move lower-priority items to Backlog. -->
 
-v1.0.0 is released. Post-1.0 work, in this order:
+v1.1.0 is released. Post-1.1 work, in this order:
 
-- **Frontend guide `docs/API.md`** — task-oriented (open a library →
-  import with progress → read the catalog → what `Book` fields mean →
-  curate → errors → plug in a `MetadataSource`), with `cli.py` cited as
-  the worked example. Docstrings stay the per-signature reference. Add a
-  test that every `bookman.__all__` name is mentioned in it.
-- `/prep`, then `/release` — gates for the next tagged version (1.x
-  minor for any public-API change, patch otherwise).
+TUI requests (inbox triage 2026-09-27) come first, then the items after them.
+
+- **`Book.added` + `ReadIssue.summary`**: an `added` timestamp set once
+  when a book is created, None for older books (FEATURES I11, J5).
+  Share the metadata.json v6 bump with the content hash below. A short,
+  sentence-cased `summary` beside `advice`, which stays the full next
+  step and stays lowercase for the CLI.
+- **Already-in-library check** (spec + ADR first: changes GROUP-4/F13
+  re-import). A content hash per format in metadata.json and the index,
+  `Library.find_file(path)` plus a batch form (offline, cheap enough for
+  an import preview of a few hundred files), checked before the parse
+  and lookup, and a new "already in library" outcome
+  (`ImportBatchResult.unchanged`). Covers most of the Backlog cache item.
+- **Persist the lookup outcome** (spec first: IDENT outcome recording,
+  E9). Identified / no match / lookup failed / not attempted (offline)
+  on `Book`, so a frontend can warn and retry exactly the failed ones.
+  A filter for it belongs in the query layer.
+- **Replace a wrong cover** (curation ADR; FEATURES K4):
+  `reidentify(book, replace_cover=True)` that leaves human-set fields
+  alone, and `set_cover(book, path | None)` for a local image or
+  removal. Today the only route (un-review, reidentify, re-review) can
+  overwrite an author the user just corrected.
+
+- **Decide OQ3 editions against the Calibre data** — 8 of the 12
+  remaining splits have an edition marker on one side only (C7's accepted
+  cost under ADR-23). Use the FIELD-NOTES Calibre table to decide whether
+  a one-sided marker should keep blocking a join. Spec + ADR if it
+  changes, then FEATURES C7.
+- **Resolve the IDENT-4 stem-grouping divergence** — the code groups on
+  the filename stem; the spec says the stem is for naming only. Decide
+  which one is wrong (FN-6: stems drift; FN-8: stem adoption set aside),
+  then fix the spec or the code to match.
+- **Manual grouping overrides** — for files the user knows belong
+  together (or apart) when identification can't prove it. At import:
+  force-group a file into a named existing book, and force-add a file as a
+  new book that skips grouping (K12). After import: merge two books (K6)
+  and split a format out (K7). Grouping behavior, so the spec comes first:
+  an IDENTIFICATION.md step and ADR for a user-asserted group basis
+  (`grouped=manual`?), and a decision on whether it sets `reviewed` and
+  survives `reidentify`. Same-kind collisions are refused, as F14 does.
+  API only, no CLI (ADR-24).
+- **Query commands** — a query layer on the sqlite index with a fallback
+  that walks the `metadata.json` files when the index is missing,
+  unreadable or stale (`index.is_current`), so both paths return the same
+  answer. Candidates from Part J: get by id (J3), filters for needs-review,
+  format, basis and cover (J4), field-scoped `author:`/`isbn:` (J6), and
+  counts (J7). Index columns grow to carry the filter fields (schema
+  bump). API only, no CLI.
 
 ## Backlog
 <!-- Accepted but not yet active. Load this section only when planning or prioritizing. -->
 - Open Library signals worth using (surveyed 2026-09-18 against the *Why We Can't Wait* work, 29 editions): (a) `search.json?q=isbn:X&fields=editions,editions.cover_i,editions.format,editions.publisher` returns the work **plus the one edition carrying X** in the same single request — the owned edition's cover instead of the work's default, and `format`/`publisher` for free; parsing change only. (b) Work `key` + work-level `isbn[]` (every edition's ISBN): an EPUB with ISBN X and a PDF with ISBN Y are provably the same work — stronger than today's `title_author` join, and a stable identity beyond one ISBN; needs a `work_id` on `Book` and a new GROUP evidence kind (spec + ADR). (c) `language` on candidates vs EPUB `dc:language` as a MATCH veto (spec + ADR). (d) `format` in IDENT-5 ranking: `audio cd` below anything for an EPUB/PDF file (spec + ADR). (e) `author_key` is author *identity* — the real fix for D6 — but only on the OL side; needs a name→key step. (f) `edition_count`/`readinglog_count` as an explicit tie-break among equal-basis candidates ("Summary of Deep Work" vs *Deep Work*) — spec says relevance doesn't decide, so ADR. Not usable: no role field anywhere (narrator vs author is indistinguishable; `by_statement`/`contributions` are free text); `physical_format` is free-text and missing on 20/29 editions; `contributor`/`person` are noise. Edition-true authors exist only via `/isbn/…json` → `/works/…json` → `/authors/…json`.
+- Source registry for N8, once a second source exists: enumerate the known sources with display name, description and whether each needs the network; per-source settings (enabled, order, credentials/options, N4) read and written through the shared config, so the TUI renders a Settings screen generically. The TUI asked for this shape on 2026-09-26; deferred because with only Open Library there is nothing to design against. Builds on `configured_library` (ADR-38). Also: record which source supplied each book's record (`Book` field + a name on `MetadataSource`). Deferred from ADR-38 because `identified is not None` means "Open Library" until a second source exists, so older books can be backfilled then.
+- Author sort key (TUI request 2026-09-27): a public `author_sort_key(author)` giving the primary author as "Surname, Given", stable across "Last, First" and "First Last", with a small particle list (le, de, van, von…) so "Le Guin" sorts under L. The TUI sorts by the stored string until then. Needs a decision on how far name parsing goes; an editable override (Calibre's "author sort") is later still.
+- Delete a book (FEATURES K9): once it exists, `ReadIssue.advice` should name it instead of "delete this book's folder".
 - Cache at the `MetadataSource` seam (ADR-13): `import_file` runs `identify` (network) *before* `_find_book` (catalog), by design — GROUP-4 needs the follow-up format's own identification to decide upgrade/no-downgrade (F7/F8). So the PDF of an already-shelved EPUB does the full Open Library round-trip again. Fix is a memoizing wrapper source, not a reorder: per import batch at minimum, or persisted in the library so a re-imported ISBN never hits the network. No spec change. (Raised 2026-09-18.)
 - Matching follow-ups (from the live Gutenberg smoke run after ADR-9): author agreement is surname-only, so "Frank Herbert" vs "Brian Herbert" count as the same author (pinned in `test_match.py` as a known limitation); a title whose subtitle follows a period ("A CHRISTMAS CAROL IN PROSE. Being a Ghost Story...") isn't split, since ". " also appears inside titles ("Mr. Darcy..."); Open Library title search is sent the raw file title, so a long Gutenberg-style title only surfaces the cover-less Gutenberg-derived records — acceptable, but a second search on the normalized short title could find a cover.
 - MOBI parser (`formats/mobi.py`): one module exposing a `FormatParser` plus a `register(".mobi", FormatKind.MOBI, parse_mobi)` in `formats/__init__.py` (R7 made this a drop-in). Two sample files still skipped — and staying skipped: deprioritized below v1.0 on 2026-09-18 (legacy Amazon format, most expensive parser under ADR-3; see ADR-2 Amendment and FEATURES L11).
@@ -29,6 +73,10 @@ v1.0.0 is released. Post-1.0 work, in this order:
 ## Done
 <!-- Completed items land here temporarily.
      The stop hook archives these to .claude/archive/YYYY-MM.md and clears this section. -->
+- **Library marker, open-without-create, root origin** (2026-09-27, TUI SETUP-5/START-5): `.bookman-library.json` + `is_library`, `configured_library(create=False)` raising `LibraryNotFoundError`, `locate_library`/`LibraryLocation`/`LibraryOrigin` (ADR-39). CLI list/search/import refuse a missing or non-library root. 593 tests.
+- **Frontend guide `docs/API.md`** (2026-09-27): open → settings → import with progress → catalog → `Book` fields → curate → errors → plug in a source, citing `cli.py`; `test_public_api` fails if an `__all__` name is missing from it. README points to it.
+- **Config-driven source selection** (2026-09-27, TUI request): `Config.offline` + public `configured_library(explicit=None)` (ADR-38); CLI import/config/init use it. Source registry and per-book source provenance deferred to Backlog under N8. 573 tests.
+- **v1.1.0 released** (2026-09-26): https://github.com/konoerik/bookman/releases/tag/v1.1.0 — ADR-29..37 from the Calibre run; minor for `ReadIssue`/`BookFormat.read_issue` and metadata.json schema v5; `bookman[crypto]` extra. Wheel smoke-tested locally with the extra (read a real AES PDF); Release and CI workflows green.
 - **Calibre-library run, second half** (2026-09-26): all 39 batches run fresh three times via hard links (`tools/calibre-oracle/linked.py`, local only, gitignored). FN-11..18 plus new FN-20/21 fixed spec-first as ADR-29..37: unreadable PDFs import with `ReadIssue` (schema v5) and the `bookman[crypto]` extra (PyCryptodome); fuzz within a word; volume markers; layout-filename titles; EPUB front-matter ISBN scan; full-form title agreement; atomic copy + cleanup; folder rename on title upgrade; tag-free search with title-only retry. 456/19 → 477/0 imported/failed, 23 → 12 splits, 76 → 46 needs review, 0 wrong merges. spec_version 6, 557 tests.
 - **v1.0.0 released** (2026-09-20): https://github.com/konoerik/bookman/releases/tag/v1.0.0 — wheel + sdist, installed from the Release URL into a clean venv. `v0.1.0` tag deleted (never had a Release) so 1.0.0 is the first; tag moved once onto the housekeeping commit `3c22a50` (CHANGELOG folds 0.1.0 into 1.0.0; asset glob `*.whl`/`*.tar.gz` only); stray `default.gitignore` asset removed by hand. Tag moves are classified destructive in auto mode — the user runs them.
 - Release plumbing (2026-09-20): `.github/workflows/release.yml` on `v*` tags — checks, `uv build`, tag-matches-version guard, clean-venv smoke test, GitHub Release with sdist + wheel; version 1.0.0, classifier Production/Stable, CHANGELOG `[1.0.0]`; `CONTRIBUTING.md` (uv-only, spec-first rule, bug reports as shapes); issue template for wrong match / missed grouping / missing cover; README install via Release wheel; Makefile `check`/`build`. Wheel built and smoke-tested locally.

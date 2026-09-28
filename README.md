@@ -47,6 +47,7 @@ user-config directory; `$BOOKMAN_CONFIG` points it elsewhere).
 
 ```
 ~/Books/
+├── .bookman-library.json                 # marks the folder as a library
 ├── .bookman-index.sqlite3                # disposable search index
 ├── Deep Work/
 │   ├── Deep Work.epub
@@ -94,18 +95,19 @@ search index from what it read, so `bookman search` sees it from then on.
 ```python
 from pathlib import Path
 
-from bookman import Library, resolve_library
+from bookman import configured_library
 
-lib = Library(resolve_library())
+lib = configured_library()
 result = lib.import_directory(Path("~/Downloads/humble-bundle").expanduser())
 for book in lib.scan():
     print(book.title, book.author, book.needs_review)
 ```
 
-`Library` takes an explicit root and never reads global state; only frontends
-call `resolve_library`. Metadata lookups go through the `MetadataSource`
-protocol, so you can pass `NullSource()` to work offline or plug in your own
-source. Every exception raised is a `BookmanError`, and the package logs
+`configured_library` opens the library the user set up, with the metadata
+source their saved settings choose (`"offline": true` in the config turns
+lookups off). `Library(root, source=...)` itself never reads global state.
+Metadata lookups go through the `MetadataSource` protocol, so you can pass
+`NullSource()` to work offline or plug in your own source. Every exception raised is a `BookmanError`, and the package logs
 under the `"bookman"` logger with a `NullHandler` installed.
 
 **One writer at a time.** A library assumes a single process writes to it:
@@ -115,8 +117,9 @@ swapped in one step), but two concurrent imports into the same library can
 race on a book's folder, and the last `metadata.json` write wins. There is no
 lock file; if you run two frontends, run them against different libraries.
 
-The public API is exactly what `bookman/__init__.py` exports; see
-`docs/ARCHITECTURE.md` for the design decisions behind it.
+The public API is exactly what `bookman/__init__.py` exports. `docs/API.md` is
+the frontend guide to it, by task; `docs/ARCHITECTURE.md` has the design
+decisions behind it.
 
 ## Development
 

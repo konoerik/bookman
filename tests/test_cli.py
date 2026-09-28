@@ -7,7 +7,7 @@ from helpers import make_pdf as _make_pdf
 
 from bookman import cli, config
 from bookman.identify.source import Candidate
-from bookman.library import Library
+from bookman.library import MARKER_NAME, Library
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 
 
@@ -400,6 +400,101 @@ def test_config_command_shows_state_before_and_after_init(tmp_path, config_file,
     after = capsys.readouterr().out
     assert str(config_file) in after
     assert f"Active library:   {(tmp_path / 'Books').resolve()}" in after
+
+
+def test_init_keeps_the_other_saved_settings(tmp_path, config_file):
+    config.save_config(config.Config(library=tmp_path / "Old", offline=True), config_file)
+
+    assert cli.main(["init", str(tmp_path / "New")]) == 0
+
+    assert config.load_config(config_file) == config.Config(
+        library=(tmp_path / "New").resolve(), offline=True
+    )
+
+
+def test_init_replaces_a_malformed_config(tmp_path, config_file):
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("{oops")
+
+    assert cli.main(["init", str(tmp_path / "Books")]) == 0
+
+    assert config.load_config(config_file) == config.Config(library=(tmp_path / "Books").resolve())
+
+
+def test_import_does_not_look_books_up_when_offline(tmp_path, monkeypatch, capsys):
+    hit = Candidate(title="Deep Work", author="Cal Newport", cover_url=None)
+    online = FakeSource(record=hit, results=[hit])
+    monkeypatch.setattr("bookman.library.OpenLibrarySource", lambda: online)
+    library_root = tmp_path / "Books"
+    config.save_config(config.Config(library=library_root, offline=True))
+    Library(library_root)
+    source = _make_epub(tmp_path / "book.epub", title="Deep Work", author="Cal Newport")
+
+    assert cli.main(["import", str(source)]) == 0
+
+    assert online.calls == []
+    assert "Lookups:   offline" in capsys.readouterr().out
+    (book,) = Library(library_root).scan()
+    assert book.identified is None
+
+
+def test_import_reports_a_malformed_config_even_with_a_library_flag(tmp_path, config_file, capsys):
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text('{"library": "/x", "offline": "yes"}')
+    source = _make_epub(tmp_path / "book.epub", title="Deep Work")
+
+    code = cli.main(["--library", str(tmp_path / "Books"), "import", str(source)])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "bad config file" in err
+    assert '"offline" to be true or false' in err
+
+
+@pytest.mark.parametrize("command", [["list"], ["search", "x"], ["import", "."]])
+def test_a_missing_saved_library_is_reported_not_recreated(tmp_path, config_file, capsys, command):
+    root = tmp_path / "Unplugged"
+    config.save_config(config.Config(library=root), config_file)
+
+    code = cli.main(command)
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "library not found" in err
+    assert "connect it" in err
+    assert not root.exists()
+
+
+def test_list_refuses_a_folder_that_is_not_a_library(tmp_path, capsys):
+    folder = tmp_path / "Downloads"
+    folder.mkdir()
+    (folder / "book.epub").write_bytes(b"x")
+
+    code = cli.main(["--library", str(folder), "list"])
+
+    assert code == 1
+    assert "not a bookman library" in capsys.readouterr().err
+    assert not (folder / MARKER_NAME).exists()
+
+
+def test_config_command_shows_where_the_library_came_from(tmp_path, config_file, capsys):
+    config.save_config(config.Config(library=tmp_path / "Books"), config_file)
+
+    assert cli.main(["config"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"(saved in {config_file})" in out
+    assert "(missing)" in out
+
+
+def test_config_command_shows_whether_lookups_are_online(tmp_path, config_file, capsys):
+    config.save_config(config.Config(library=tmp_path / "Books"), config_file)
+    assert cli.main(["config"]) == 0
+    assert "Lookups:          online (Open Library)" in capsys.readouterr().out
+
+    config.save_config(config.Config(library=tmp_path / "Books", offline=True), config_file)
+    assert cli.main(["config"]) == 0
+    assert "Lookups:          offline" in capsys.readouterr().out
 
 
 def test_config_command_shows_override_sources(tmp_path, monkeypatch, capsys):

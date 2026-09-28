@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `Config.offline`: a saved setting that turns off Open Library lookups
+  and cover downloads, so imports catalog each book from its file alone
+  (ADR-38).
+- `configured_library()`: opens the configured library with the source
+  its settings choose, the one way for a frontend to build its `Library`
+  (ADR-38).
+- `docs/API.md`: a task-oriented guide for frontend authors.
+- A library is marked by `.bookman-library.json` at its root, and
+  `is_library(path)` tells a library from any other folder (ADR-39).
+- `locate_library()` returns the library root together with where it was
+  named (`LibraryLocation`, `LibraryOrigin`) (ADR-39).
+
+### Changed
+- `bookman import` opens the library through `configured_library` and
+  says in its header when lookups are off; `bookman config` shows the
+  setting; `bookman init` keeps the other saved settings.
+- `configured_library` opens only an existing library unless
+  `create=True`, raising the new `LibraryNotFoundError`, so a saved
+  library on a disconnected drive is reported instead of recreated empty
+  (ADR-39). The CLI's `list`, `search` and `import` refuse a missing
+  library or a folder of other files; `import --library <new dir>` still
+  creates one. `bookman config` says where the library path came from.
+
 ## [1.1.0] - 2026-09-26
 
 From running the rest of the author's library (340 books, 603 files)

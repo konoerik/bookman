@@ -7,8 +7,8 @@ from helpers import make_pdf as _make_pdf
 
 from bookman.errors import FormatConflictError, UnsupportedFormatError
 from bookman.formats.epub import BadEpubError
-from bookman.identify.source import Candidate
-from bookman.library import ImportBatchResult, Library, _sanitize_dirname
+from bookman.identify.source import Candidate, NullSource
+from bookman.library import MARKER_NAME, ImportBatchResult, Library, _sanitize_dirname, is_library
 from bookman.models import Book, BookFormat, FormatKind, MatchBasis, ReadIssue
 from bookman.storage.catalog import save_metadata
 
@@ -1431,7 +1431,7 @@ def test_a_failed_copy_leaves_no_half_imported_folder(tmp_path, library, monkeyp
     with pytest.raises(OSError):
         library.import_file(source)
 
-    assert list(library.root.iterdir()) == []
+    assert [p.name for p in library.root.iterdir()] == [MARKER_NAME]
 
 
 def test_a_failed_copy_of_a_second_format_leaves_the_book_as_it_was(tmp_path, library, monkeypatch):
@@ -1461,3 +1461,41 @@ def test_a_failed_reimport_does_not_damage_the_file_already_there(tmp_path, libr
 
     assert placed.read_bytes() == original
     assert not [p for p in book.directory.iterdir() if p.name.endswith(".partial")]
+
+
+def test_a_new_library_is_marked_and_recognised(tmp_path):
+    root = tmp_path / "Books"
+
+    Library(root)
+
+    assert (root / MARKER_NAME).is_file()
+    assert is_library(root)
+
+
+@pytest.mark.parametrize("state", ["missing", "file", "empty", "loose files"])
+def test_other_folders_are_not_libraries(tmp_path, state):
+    path = tmp_path / "Books"
+    if state == "file":
+        path.write_text("x")
+    elif state != "missing":
+        path.mkdir()
+    if state == "loose files":
+        (path / "Deep Work.epub").write_bytes(b"x")
+        (path / "Some Folder").mkdir()
+
+    assert not is_library(path)
+
+
+def test_a_library_from_before_the_marker_is_recognised_and_marked_on_open(tmp_path):
+    root = tmp_path / "Books"
+    Library(root, source=NullSource()).import_file(
+        _make_epub(tmp_path / "a.epub", title="Deep Work")
+    )
+    (root / MARKER_NAME).unlink()
+
+    assert is_library(root)
+    assert not (root / MARKER_NAME).exists()  # is_library only reads
+
+    Library(root)
+
+    assert (root / MARKER_NAME).is_file()

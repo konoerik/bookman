@@ -11,6 +11,7 @@ import errno
 import os
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import NoReturn
@@ -19,21 +20,27 @@ from bookman.config import (
     ENV_LIBRARY,
     Config,
     config_path,
+    configured_library,
     load_config,
-    resolve_library,
+    locate_library,
     save_config,
 )
 from bookman.errors import (
+    ConfigError,
     FormatConflictError,
     LibraryNotConfiguredError,
+    LibraryNotFoundError,
     UnsupportedFormatError,
 )
 from bookman.formats import is_supported, supported_suffixes
-from bookman.library import ImportBatchResult, ImportEvent, Library
+from bookman.library import ImportBatchResult, ImportEvent, Library, is_library
 from bookman.models import Book, MatchBasis, ReadIssue
 
 _SUPPORTED = ", ".join(supported_suffixes())
 _RULE_WIDTH = 60
+_OFFLINE_NOTE = (
+    'offline (file metadata only; set "offline": false in the config file to look books up)'
+)
 _LIBRARY_HELP = f"library root directory (default: ${ENV_LIBRARY}, then the saved config)"
 
 _DESCRIPTION = """\
@@ -91,11 +98,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Process exit code: 0 on full success. `import` returns 1 if
         any file in the batch failed or was refused as a conflict
-        (partial success still imports and reports the rest). `list`
-        and `search` return 1 if the library root doesn't exist.
-        Any command that needs a library
-        returns 1 if none is configured (see `config.resolve_library`)
-        or the config file is malformed. Invoking with no command
+        (partial success still imports and reports the rest). Any
+        command that needs a library returns 1 if none is configured,
+        if the root is missing or not a library (only `import` with an
+        explicit `--library` creates one; see
+        `config.configured_library`), or if the config file is
+        malformed. Invoking with no command
         prints the help and returns 0. Bad arguments exit 2 via
         argparse. Ctrl-C returns 130. Per-file/command errors are
         printed to stderr, not raised.
@@ -110,25 +118,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config":
         return _cmd_config(args.library)
 
+    # An explicit --library may name a new folder for import to fill, as
+    # before ADR-39; a saved or $BOOKMAN_LIBRARY root must already be a
+    # library, so an unplugged drive is reported, not replaced.
+    create = args.command == "import" and args.library is not None
     try:
-        root = resolve_library(args.library)
-    except LibraryNotConfiguredError as exc:
+        library = configured_library(args.library, create=create)
+    except (LibraryNotConfiguredError, LibraryNotFoundError) as exc:
         _error(str(exc))
         return 1
-    except ValueError as exc:
+    except ConfigError as exc:
         _error(f"bad config file: {exc}")
-        return 1
-    if root.exists() and not root.is_dir():
-        _error(f"library path is not a directory: {root}")
         return 1
 
     try:
         if args.command == "import":
-            return _cmd_import(root, args.path, recursive=args.recursive)
+            return _cmd_import(library, args.path, recursive=args.recursive)
         if args.command == "list":
-            return _cmd_list(root, needs_review_only=args.needs_review)
+            return _cmd_list(library, needs_review_only=args.needs_review)
         if args.command == "search":
-            return _cmd_search(root, args.query)
+            return _cmd_search(library, args.query)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
@@ -255,7 +264,11 @@ def _cmd_init(directory: Path) -> int:
         _error(f"not a directory: {directory}")
         return 1
     Library(directory)
-    save_config(Config(library=directory))
+    try:
+        saved = load_config()
+    except ConfigError:
+        saved = None  # init is how a user replaces a broken config
+    save_config(replace(saved, library=directory) if saved else Config(library=directory))
     _header("Library set up")
     print(f"Library: {directory.resolve()}")
     print(f"Config:  {config_path()}")
@@ -284,19 +297,25 @@ def _cmd_config(explicit: Path | None) -> int:
         print(f"Saved library:    (unreadable: {exc})")
     else:
         print(f"Saved library:    {saved.library if saved else '(none)'}")
+        lookups = _OFFLINE_NOTE if saved and saved.offline else "online (Open Library)"
+        print(f"Lookups:          {lookups}")
     env = os.environ.get(ENV_LIBRARY)
     print(f"${ENV_LIBRARY}: {env or '(not set)'}")
     if explicit is not None:
         print(f"--library:        {explicit}")
     _rule()
     try:
-        print(f"Active library:   {resolve_library(explicit).resolve()}")
+        location = locate_library(explicit)
+        print(f"Active library:   {location.path.resolve()} ({location.describe()})")
+        if not is_library(location.path):
+            state = "missing" if not location.path.exists() else "not a bookman library"
+            print(f"                  ({state})")
     except (LibraryNotConfiguredError, ValueError):
         print("Active library:   (none) - run `bookman init <dir>`")
     return 0
 
 
-def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
+def _cmd_import(library: Library, path: Path, *, recursive: bool) -> int:
     """Run `import`: dispatches to `Library.import_file` for a file or
     `Library.iter_import` for a directory, printing each file's line as
     its event arrives (`[3/41] foo.epub ... imported: <title>` or
@@ -305,7 +324,7 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
     going quiet until the end.
 
     Args:
-        root: Library root, as resolved from `--library`.
+        library: The library to import into, opened by `main`.
         path: File or directory to import, as given on the command line.
         recursive: Forwarded to `import_directory` when `path` is a
             directory; ignored for a single file.
@@ -322,8 +341,11 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
         _error(f"unsupported format {path.suffix!r}: {path} (supported: {_SUPPORTED})")
         return 1
 
-    library = Library(root)
-    _header(f"Importing: {path}", f"Into:      {root.resolve()}")
+    saved = load_config()  # main has already read it, so it is well-formed
+    lines = [f"Importing: {path}", f"Into:      {library.root.resolve()}"]
+    if saved is not None and saved.offline:
+        lines.append(f"Lookups:   {_OFFLINE_NOTE}")
+    _header(*lines)
 
     if path.is_dir():
         result = ImportBatchResult()
@@ -350,22 +372,21 @@ def _cmd_import(root: Path, path: Path, *, recursive: bool) -> int:
     return 0
 
 
-def _cmd_list(root: Path, *, needs_review_only: bool) -> int:
+def _cmd_list(library: Library, *, needs_review_only: bool) -> int:
     """Run `list`: prints every cataloged book (or, with
     `needs_review_only`, only those whose `Book.needs_review` is set),
     one line each via `_format_book`, under a header naming the library.
 
     Args:
-        root: Library root, as resolved from `--library`.
+        library: The library to list, opened by `main`.
         needs_review_only: If True, filter `Library.scan()`'s result
             to `needs_review` books before printing.
 
     Returns:
-        0 on success, 1 if the library root doesn't exist.
+        0.
     """
-    if not _require_library(root):
-        return 1
-    books = Library(root).scan()
+    root = library.root
+    books = library.scan()
 
     if needs_review_only:
         books = [book for book in books if book.needs_review]
@@ -383,22 +404,20 @@ def _cmd_list(root: Path, *, needs_review_only: bool) -> int:
     return 0
 
 
-def _cmd_search(root: Path, query: str) -> int:
+def _cmd_search(library: Library, query: str) -> int:
     """Run `search`: prints every book matching `query` (title/author
     substring), one line each via `_format_book`, under a header
     naming the query.
 
     Args:
-        root: Library root, as resolved from `--library`.
+        library: The library to search, opened by `main`.
         query: Passed straight through to `Library.search`.
 
     Returns:
-        0 on success (an empty result set is not an error), 1 if the
-        library root doesn't exist.
+        0 (an empty result set is not an error).
     """
-    if not _require_library(root):
-        return 1
-    books = Library(root).search(query)
+    root = library.root
+    books = library.search(query)
 
     _header(f"Library: {root.resolve()}", f"{len(books)} matches for {query!r}")
     if not books:
@@ -408,20 +427,6 @@ def _cmd_search(root: Path, query: str) -> int:
     for book in books:
         print(_format_book(book))
     return 0
-
-
-def _require_library(root: Path) -> bool:
-    """Report and return False if `root` doesn't exist. `list`/`search`
-    call this before constructing a `Library`, which would otherwise
-    create the directory (and an index file) as a side effect -- so a
-    typo'd `--library` path looks like an empty library instead of a
-    mistake.
-    """
-    if root.is_dir():
-        return True
-    _error(f"library not found: {root}")
-    print("(create it with `bookman init <dir>`)", file=sys.stderr)
-    return False
 
 
 def _header(*lines: str) -> None:
